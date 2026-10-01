@@ -1,1 +1,112 @@
-const API_URL="/api/dashboard";const demo={totals:{requests:1240,telegram:650,instagram:590,searched:780,found:641,not_found:139,orders:96,completed:74,sales:8450000,conversion:9.5},operator_leads:47,complaints:8,hot_leads:31,funnel:[["Jami so‘rov",1240],["Dori qidiruvi",780],["Topildi",641],["Delivery boshlandi",150],["Buyurtma",96],["Yakunlandi",74]],platforms:{Telegram:650,Instagram:590},top_drugs:[["Nimesil",94,89],["Kanefron",83,78],["Nurofen",72,69],["Sinepar",66,41],["Detralex",59,55],["Magne B6",53,48],["Karsil",48,45],["Aevit",44,39],["D3",42,38],["Enterol",37,35]],not_found:[["Sinepar",25,18],["Roaccutane",14,9],["Aknetrent",12,8],["Dentazol",9,5],["Parodium",7,4]],trend:[["22",560,31],["23",620,36],["24",710,42],["25",840,51],["26",930,58],["27",1090,67],["28",1240,74]]};function money(v){return new Intl.NumberFormat("uz-UZ").format(v)+" so‘m"}async function load(period){try{const r=await fetch(`${API_URL}?period=${period}`,{cache:"no-store"});if(!r.ok)throw 0;return await r.json()}catch(e){return demo}}function card(l,v,d=""){return `<div class="card"><div class="label">${l}</div><div class="value">${v}</div><div class="delta">${d}</div></div>`}function render(d){const t=d.totals;cards.innerHTML=[card("Jami so‘rovlar",t.requests,"Telegram + Instagram"),card("Dori topildi",t.found,`${Math.round(t.found/Math.max(1,t.searched)*100)}% topilish`),card("Buyurtmalar",t.completed,`${t.orders} ta boshlangan`),card("Savdo",money(t.sales),`${t.conversion}% konversiya`),card("Telegram",t.telegram),card("Instagram",t.instagram),card("Topilmadi",t.not_found),card("Dori qidiruvi",t.searched)].join("");const mf=Math.max(...d.funnel.map(x=>x[1]),1);funnel.innerHTML=d.funnel.map(([n,v])=>`<div class="frow"><div>${n}</div><div class="bar"><i style="width:${v/mf*100}%"></i></div><div class="num">${v}</div></div>`).join("");const mp=Math.max(...Object.values(d.platforms),1);platformBars.innerHTML=Object.entries(d.platforms).map(([n,v])=>`<div class="prow"><div class="top"><span>${n}</span><b>${v}</b></div><div class="bar"><i style="width:${v/mp*100}%"></i></div></div>`).join("");topDrugs.innerHTML=d.top_drugs.map((r,i)=>`<tr><td>${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="badge">${r[2]}</span></td></tr>`).join("");notFound.innerHTML=d.not_found.map((r,i)=>`<tr><td>${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="badge">${r[2]}</span></td></tr>`).join("");operatorLeads.textContent=d.operator_leads;complaints.textContent=d.complaints;hotLeads.textContent=d.hot_leads;const mt=Math.max(...d.trend.flatMap(x=>[x[1],x[2]*12]),1);trend.innerHTML=d.trend.map(([x,r,s])=>`<div class="day"><i style="height:${r/mt*100}%"></i><i class="sales" style="height:${s*12/mt*100}%"></i><label>${x}</label></div>`).join("")}async function refresh(){const p=period.value;const names={today:"Bugungi ko‘rsatkichlar",yesterday:"Kechagi ko‘rsatkichlar","7d":"Oxirgi 7 kun","30d":"Oxirgi 30 kun",month:"Shu oy"};periodText.textContent=names[p]||"Statistika";render(await load(p))}refresh.onclick=refresh;period.onchange=refresh;refresh();
+const API_URL = "https://api.dehkonbi.uz/api/dashboard";
+
+function money(v) {
+  return new Intl.NumberFormat("uz-UZ").format(Number(v || 0)) + " so‘m";
+}
+
+async function load(period) {
+  const r = await fetch(`${API_URL}?period=${encodeURIComponent(period)}`, {
+    cache: "no-store",
+    headers: { "Accept": "application/json" }
+  });
+
+  if (!r.ok) {
+    let detail = "";
+    try { detail = await r.text(); } catch (_) {}
+    throw new Error(`API ${r.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+
+  return await r.json();
+}
+
+function card(label, value, note = "") {
+  return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div><div class="delta">${note}</div></div>`;
+}
+
+function render(d) {
+  const t = d.totals || {};
+  const searched = Number(t.searched || 0);
+  const found = Number(t.found || 0);
+  const foundRate = searched ? Math.round(found / searched * 100) : 0;
+
+  cards.innerHTML = [
+    card("Jami so‘rovlar", t.requests || 0, "Telegram + Instagram"),
+    card("Dori topildi", found, `${foundRate}% topilish`),
+    card("Buyurtmalar", t.completed || t.orders || 0, `${t.orders || 0} ta boshlangan`),
+    card("Savdo", money(t.sales || 0), `${t.conversion || 0}% konversiya`),
+    card("Telegram", t.telegram || 0),
+    card("Instagram", t.instagram || 0),
+    card("Topilmadi", t.not_found || 0),
+    card("Dori qidiruvi", searched)
+  ].join("");
+
+  const funnelData = d.funnel || [];
+  const mf = Math.max(...funnelData.map(x => Number(x[1] || 0)), 1);
+  funnel.innerHTML = funnelData.map(([n, v]) =>
+    `<div class="frow"><div>${n}</div><div class="bar"><i style="width:${Number(v || 0) / mf * 100}%"></i></div><div class="num">${v}</div></div>`
+  ).join("") || '<div class="empty">Ma’lumot yo‘q</div>';
+
+  const platforms = d.platforms || {};
+  const mp = Math.max(...Object.values(platforms).map(Number), 1);
+  platformBars.innerHTML = Object.entries(platforms).map(([n, v]) =>
+    `<div class="prow"><div class="top"><span>${n}</span><b>${v}</b></div><div class="bar"><i style="width:${Number(v || 0) / mp * 100}%"></i></div></div>`
+  ).join("") || '<div class="empty">Ma’lumot yo‘q</div>';
+
+  topDrugs.innerHTML = (d.top_drugs || []).map((r, i) =>
+    `<tr><td>${i + 1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="badge">${r[2]}</span></td></tr>`
+  ).join("");
+
+  notFound.innerHTML = (d.not_found || []).map((r, i) =>
+    `<tr><td>${i + 1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="badge">${r[2]}</span></td></tr>`
+  ).join("");
+
+  operatorLeads.textContent = d.operator_leads || 0;
+  complaints.textContent = d.complaints || 0;
+  hotLeads.textContent = d.hot_leads || 0;
+
+  const trendData = d.trend || [];
+  const mt = Math.max(...trendData.flatMap(x => [Number(x[1] || 0), Number(x[2] || 0) * 12]), 1);
+  trend.innerHTML = trendData.map(([x, r, s]) =>
+    `<div class="day"><i style="height:${Number(r || 0) / mt * 100}%"></i><i class="sales" style="height:${Number(s || 0) * 12 / mt * 100}%"></i><label>${x}</label></div>`
+  ).join("");
+}
+
+function renderError(err) {
+  cards.innerHTML = `<div class="panel" style="grid-column:1/-1"><b>API bilan ulanishda xato</b><div style="margin-top:8px;color:#6f7c74;font-size:13px">${err.message}</div></div>`;
+  funnel.innerHTML = "";
+  platformBars.innerHTML = "";
+  topDrugs.innerHTML = "";
+  notFound.innerHTML = "";
+  operatorLeads.textContent = "—";
+  complaints.textContent = "—";
+  hotLeads.textContent = "—";
+  trend.innerHTML = "";
+}
+
+async function refreshDashboard() {
+  const p = period.value;
+  const names = {
+    today: "Bugungi ko‘rsatkichlar",
+    yesterday: "Kechagi ko‘rsatkichlar",
+    "7d": "Oxirgi 7 kun",
+    "30d": "Oxirgi 30 kun",
+    month: "Shu oy"
+  };
+
+  periodText.textContent = names[p] || "Statistika";
+  refresh.disabled = true;
+  refresh.textContent = "Yuklanmoqda...";
+
+  try {
+    render(await load(p));
+  } catch (err) {
+    renderError(err);
+  } finally {
+    refresh.disabled = false;
+    refresh.textContent = "Yangilash";
+  }
+}
+
+refresh.onclick = refreshDashboard;
+period.onchange = refreshDashboard;
+refreshDashboard();
