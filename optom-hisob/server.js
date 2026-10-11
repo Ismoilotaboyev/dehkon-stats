@@ -9,6 +9,7 @@ import {otherPages} from './pages-other.js';
 import {actions} from './actions.js';
 import {I18N_SNIPPET} from './i18n-client.js';
 import {WORDING_SNIPPET} from './wording-client.js';
+import {VOICE_RECORDER_SNIPPET} from './voice-recorder-client.js';
 
 await init();
 
@@ -21,9 +22,9 @@ const sellerPassword=email=>({
 
 const server=http.createServer(async(r,res)=>{try{
  const rawEnd=res.end.bind(res);
- res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}</body>`);return rawEnd(chunk,...args)};
+ res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}</body>`);return rawEnd(chunk,...args)};
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'wording-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'voice-recorder-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
