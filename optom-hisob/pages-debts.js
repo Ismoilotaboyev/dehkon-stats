@@ -53,7 +53,7 @@ export async function debtsPage(res,url,u){
   <div class="debt-contact">${e(c.phone||'Telefon yo‘q')}${c.place?' · '+e(c.place):''}</div>
   <div class="debt-mini-stats">
    <div><span>Hozirgi qarz</span><b>${money(st.currentDebt)}</b></div>
-   <div><span>Qaytargan</span><b>${money(st.repaid)}</b></div>
+   <div class="debt-open-stat"><span>Ochiq nasiya</span><b>${st.openCount} ta</b></div>
   </div>
   <div class="debt-meta"><span>Jami nasiya: <b>${money(st.totalCredit)}</b></span><span>O‘rtacha: <b>${st.avgDays===null?'—':st.avgDays+' kun'}</b></span></div>
   <div class="debt-card-actions"><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></div>
@@ -74,7 +74,7 @@ export async function debtsPage(res,url,u){
   .debt-open-label{font-size:12px;color:var(--muted);font-weight:800}.debt-pill{background:#fff4df;color:#8a6200;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900}
   .debt-name{display:block;font-size:18px;line-height:1.2;font-weight:900;letter-spacing:-.2px;margin-bottom:4px}
   .debt-seller{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:3px}.debt-contact{font-size:12px;color:var(--muted);line-height:1.35}
-  .debt-mini-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 9px}.debt-mini-stats>div{background:#f5f7f4;border-radius:11px;padding:10px;min-width:0}.debt-mini-stats span{display:block;font-size:10px;color:var(--muted);font-weight:800}.debt-mini-stats b{display:block;margin-top:3px;font-size:14px;overflow-wrap:anywhere}
+  .debt-mini-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 9px}.debt-mini-stats>div{background:#f5f7f4;border-radius:11px;padding:10px;min-width:0}.debt-mini-stats span{display:block;font-size:10px;color:var(--muted);font-weight:800}.debt-mini-stats b{display:block;margin-top:3px;font-size:14px;overflow-wrap:anywhere}.debt-mini-stats .debt-open-stat{background:#eaf4ed}.debt-mini-stats .debt-open-stat b{color:#176d45}
   .debt-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:10px;font-weight:700;margin-bottom:11px}.debt-meta b{color:var(--text)}
   .debt-card-actions{display:grid}.debt-card-actions .btn{min-height:44px;width:100%}
  }
