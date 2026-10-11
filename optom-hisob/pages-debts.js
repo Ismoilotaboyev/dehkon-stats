@@ -45,17 +45,17 @@ export async function debtsPage(res,url,u){
  const desktopRows=stats.map(({c,st})=>`<tr>
   <td><a class="link" href="/debts/customer/${c.id}"><b>${e(c.name)}</b></a><div class="muted">${e(c.phone||'')} ${c.place?'· '+e(c.place):''}</div></td>
   ${u.role==='manager'?`<td>${e(c.seller_name)}</td>`:''}
-  <td><b>${money(st.currentDebt)}</b></td><td>${st.credits.length}</td><td>${money(st.totalCredit)}</td><td>${money(st.repaid)}</td><td>${st.openLoadCount}</td><td>${st.avgDays===null?'—':st.avgDays+' kun'}</td><td><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></td>
+  <td><b>${money(st.currentDebt)}</b></td><td>${st.credits.length}</td><td>${money(st.totalCredit)}</td><td>${money(st.repaid)}</td><td>${st.openCount}</td><td>${st.avgDays===null?'—':st.avgDays+' kun'}</td><td><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></td>
  </tr>`).join('');
 
  const mobileCards=stats.map(({c,st})=>`<article class="debt-card-mobile">
-  <div class="debt-card-top"><span class="debt-open-label">${st.openLoadCount} yukdan qarzi bor</span><span class="debt-pill">Nasiya</span></div>
+  <div class="debt-card-top"><span class="debt-open-label">${st.openCount} yukdan qarzi bor</span><span class="debt-pill">Nasiya</span></div>
   <a class="debt-name" href="/debts/customer/${c.id}">${e(c.name)}</a>
   ${u.role==='manager'?`<div class="debt-seller">${e(c.seller_name)}</div>`:''}
   <div class="debt-contact">${e(c.phone||'Telefon yo‘q')}${c.place?' · '+e(c.place):''}</div>
   <div class="debt-mini-stats">
    <div><span>Hozirgi qarz</span><b>${money(st.currentDebt)}</b></div>
-   <div class="debt-open-stat"><span>Qarzdor yuklar</span><b>${st.openLoadCount} ta</b></div>
+   <div class="debt-open-stat"><span>Qarzdor yuklar</span><b>${st.openCount} ta</b></div>
   </div>
   <div class="debt-meta"><span>Jami nasiya: <b>${money(st.totalCredit)}</b></span><span>O‘rtacha: <b>${st.avgDays===null?'—':st.avgDays+' kun'}</b></span></div>
   <div class="debt-card-actions"><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></div>
