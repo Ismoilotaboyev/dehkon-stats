@@ -4,6 +4,7 @@ import {AP,SP,PORT,Q,body,cookies,send,go,init,user} from './core.js';
 import {login} from './ui.js';
 import {loadsPage} from './pages-loads.js';
 import {mainPages} from './pages-main.js';
+import {debtCustomerPage} from './pages-debt-profile.js';
 import {otherPages} from './pages-other.js';
 import {actions} from './actions.js';
 
@@ -18,7 +19,7 @@ const sellerPassword=email=>({
 
 const server=http.createServer(async(r,res)=>{try{
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-loads-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'nasiya-profile-v3'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -40,6 +41,7 @@ const server=http.createServer(async(r,res)=>{try{
  if(r.method==='GET'){
    if(await loadsPage(res,url,U))return;
    if(await mainPages(res,url,U))return;
+   if(await debtCustomerPage(res,url,U))return;
    if(await otherPages(res,url,U))return;
  }
  return go(res,'/');
