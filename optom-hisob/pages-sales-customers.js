@@ -10,10 +10,16 @@ const creditModeScript=`document.getElementById('paidField').style.display=this.
 const css=`<style>
  .sc-mobile{display:none}
  .sc-panel>details>summary{padding:14px 16px;font-weight:800;color:#147447}
+ .customer-search-wrap{padding:12px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#fff}
+ .customer-search{width:100%;min-height:44px;border:1px solid #d7dfd5;border-radius:11px;padding:10px 12px;font:inherit;color:var(--text);background:#fff;outline:none}
+ .customer-search:focus{border-color:#76a98a;box-shadow:0 0 0 3px rgba(18,108,67,.08)}
+ .customer-empty{display:none;padding:18px;text-align:center;color:var(--muted);font-size:12px;font-weight:750}
  @media(max-width:760px){
   .sc-desktop{display:none!important}.sc-mobile{display:grid;gap:10px;padding:10px}
   .sc-panel{background:transparent;border:0;box-shadow:none;overflow:visible}
   .sc-panel>details{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
+  .customer-search-wrap{padding:10px;background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:10px}
+  .customer-search{min-height:46px;font-size:16px}
   .sc-card{background:#fff;border:1px solid var(--line);border-radius:15px;padding:14px;box-shadow:none}
   .sc-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
   .sc-date{font-size:12px;color:var(--muted);font-weight:700}
@@ -28,6 +34,21 @@ const css=`<style>
   .sc-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sc-actions .btn{min-height:44px}.sc-actions .green{display:flex;align-items:center;justify-content:center}
  }
  </style>`;
+
+const customerSearchScript=`<script>(()=>{
+ const input=document.getElementById('customerSearch');if(!input)return;
+ const rows=[...document.querySelectorAll('[data-customer-row]')],cards=[...document.querySelectorAll('[data-customer-card]')];
+ const emptyDesktop=document.getElementById('customerEmptyDesktop'),emptyMobile=document.getElementById('customerEmptyMobile');
+ const norm=v=>String(v||'').toLowerCase().replace(/[\\s()+\\-_.]/g,'');
+ function run(){
+  const q=norm(input.value);let rd=0,rm=0;
+  rows.forEach(el=>{const ok=!q||norm(el.dataset.customerSearch).includes(q);el.style.display=ok?'':'none';if(ok)rd++});
+  cards.forEach(el=>{const ok=!q||norm(el.dataset.customerSearch).includes(q);el.style.display=ok?'':'none';if(ok)rm++});
+  if(emptyDesktop)emptyDesktop.style.display=q&&rd===0?'table-row':'none';
+  if(emptyMobile)emptyMobile.style.display=q&&rm===0?'block':'none';
+ }
+ input.addEventListener('input',run);input.addEventListener('search',run);run();
+})();</script>`;
 
 export async function salesCustomersPage(res,url,u){
  const p=url.pathname;
@@ -44,8 +65,11 @@ export async function salesCustomersPage(res,url,u){
 
  const ss=await sellers();
  const f=`<details><summary>+ Mijoz</summary><form class="form" method="post" action="/action/customer"><div class="grid">${seller(u,ss)}<label class="field">Ism<input name="name" required></label><label class="field">Telefon<input name="phone"></label><label class="field">Joy<input name="place"></label><label class="field">Eski qarz<input name="debt" type="number" min="0" value="0"></label></div><button class="btn green" style="margin-top:10px">Saqlash</button></form></details>`;
- const rows=d.C.map(x=>`<tr><td><a class="link" href="/debts/customer/${x.id}">${e(x.name)}</a>${mark(x)}</td>${u.role==='manager'?`<td>${e(x.seller_name)}</td>`:''}<td>${e(x.phone||'')}</td><td>${e(x.place||'')}</td><td>${money(x.debt)}</td><td><a class="btn soft" href="/edit/customer/${x.id}?returnTo=%2Fcustomers">Edit</a>${hist(u,'customer',x.id)}</td></tr>`).join('');
- const cards=d.C.map(x=>{const sales=d.S.filter(s=>+s.customer_id===+x.id),total=sales.reduce((a,s)=>a+n(s.total),0),debt=n(x.debt)>0;return `<article class="sc-card"><div class="sc-top"><span class="sc-date">${dt(x.created_at)}</span><span class="sc-pill ${debt?'debt':'customer'}">${debt?'Qarzi bor':'Mijoz'}</span></div><a class="sc-name" href="/debts/customer/${x.id}">${e(x.name)}</a><div class="sc-sub">${e(x.phone||'Telefon yo‘q')}${x.place?' · '+e(x.place):''}</div>${u.role==='manager'?`<div class="sc-seller">${e(x.seller_name)}</div>`:''}<div class="sc-stats"><div><span>Hozirgi qarz</span><b>${money(x.debt)}</b></div><div><span>Jami savdo</span><b>${money(total)}</b></div></div><div class="sc-actions"><a class="btn green" href="/debts/customer/${x.id}">Ko‘rish</a><a class="btn soft" href="/edit/customer/${x.id}?returnTo=%2Fcustomers">Edit</a></div></article>`}).join('');
- send(res,layout(u,'Mijozlar',`${css}<section class="panel sc-panel">${f}<div class="sc-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Telefon</th><th>Joy</th><th>Qarz</th><th>Amal</th></tr>${rows||'<tr><td colspan="6">Mijoz yo‘q</td></tr>'}</table></div><div class="sc-mobile">${cards||'<div class="sc-card">Mijoz yo‘q</div>'}</div></section>`));
+ const rows=d.C.map(x=>{const search=e([x.name,x.phone,x.place,u.role==='manager'?x.seller_name:''].filter(Boolean).join(' '));return `<tr data-customer-row data-customer-search="${search}"><td><a class="link" href="/debts/customer/${x.id}">${e(x.name)}</a>${mark(x)}</td>${u.role==='manager'?`<td>${e(x.seller_name)}</td>`:''}<td>${e(x.phone||'')}</td><td>${e(x.place||'')}</td><td>${money(x.debt)}</td><td><a class="btn soft" href="/edit/customer/${x.id}?returnTo=%2Fcustomers">Edit</a>${hist(u,'customer',x.id)}</td></tr>`}).join('');
+ const cards=d.C.map(x=>{const sales=d.S.filter(s=>+s.customer_id===+x.id),total=sales.reduce((a,s)=>a+n(s.total),0),debt=n(x.debt)>0,search=e([x.name,x.phone,x.place,u.role==='manager'?x.seller_name:''].filter(Boolean).join(' '));return `<article class="sc-card" data-customer-card data-customer-search="${search}"><div class="sc-top"><span class="sc-date">${dt(x.created_at)}</span><span class="sc-pill ${debt?'debt':'customer'}">${debt?'Qarzi bor':'Mijoz'}</span></div><a class="sc-name" href="/debts/customer/${x.id}">${e(x.name)}</a><div class="sc-sub">${e(x.phone||'Telefon yo‘q')}${x.place?' · '+e(x.place):''}</div>${u.role==='manager'?`<div class="sc-seller">${e(x.seller_name)}</div>`:''}<div class="sc-stats"><div><span>Hozirgi qarz</span><b>${money(x.debt)}</b></div><div><span>Jami savdo</span><b>${money(total)}</b></div></div><div class="sc-actions"><a class="btn green" href="/debts/customer/${x.id}">Ko‘rish</a><a class="btn soft" href="/edit/customer/${x.id}?returnTo=%2Fcustomers">Edit</a></div></article>`}).join('');
+ const search=`<div class="customer-search-wrap"><input class="customer-search" id="customerSearch" type="search" inputmode="search" autocomplete="off" placeholder="Mijoz, telefon yoki joy bo‘yicha qidirish"></div>`;
+ const desktopEmpty=`<tr id="customerEmptyDesktop" style="display:none"><td colspan="${u.role==='manager'?6:5}"><div class="customer-empty" style="display:block">Mijoz topilmadi</div></td></tr>`;
+ const mobileEmpty=`<div class="customer-empty" id="customerEmptyMobile">Mijoz topilmadi</div>`;
+ send(res,layout(u,'Mijozlar',`${css}<section class="panel sc-panel">${f}${search}<div class="sc-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Telefon</th><th>Joy</th><th>Qarz</th><th>Amal</th></tr>${rows||'<tr><td colspan="6">Mijoz yo‘q</td></tr>'}${desktopEmpty}</table></div><div class="sc-mobile">${cards||'<div class="sc-card">Mijoz yo‘q</div>'}${mobileEmpty}</div></section>${customerSearchScript}`));
  return true;
 }
