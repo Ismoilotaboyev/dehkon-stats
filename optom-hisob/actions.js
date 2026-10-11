@@ -7,6 +7,7 @@ const saleSnap=x=>({customer_id:x.customer_id?+x.customer_id:null,kg:n(x.kg),bag
 const customerSnap=x=>({name:x.name,phone:x.phone||'',place:x.place||'',opening_debt:n(x.opening_debt)});
 const paymentSnap=x=>({customer_id:+x.customer_id,sale_id:x.sale_id?+x.sale_id:null,amount:n(x.amount),note:x.note||''});
 const expenseSnap=x=>({load_id:x.load_id?+x.load_id:null,name:x.name,amount:n(x.amount),note:x.note||''});
+const modeFromBody=b=>b.saleType?(b.saleType==='credit'?(b.creditMode==='partial'?'partial':'debt'):'cash'):String(b.paymentMode||'cash');
 const paymentSplit=(mode,total,raw)=>{if(mode==='debt')return{paid:0,debt:total};if(mode==='partial'){let paid=Math.max(0,Math.min(total,n(raw)));return{paid,debt:Math.max(0,total-paid)}}return{paid:total,debt:0}};
 export async function actions(r,res,url,u){let b=await body(r),p=url.pathname;
  if(p==='/action/load'){let s=u.role==='manager'?+b.sellerId:u.id;if(s){let mode=b.profitMode==='commission'?'commission':'own',buy=mode==='own'?n(b.buy):0,commission=mode==='commission'?n(b.commissionPerKg):0;await Q(`INSERT INTO loads(seller_id,name,product,arrived_kg,arrived_bags,purchase_amount,profit_mode,commission_per_kg) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[s,b.name||'',b.product||'Kartoshka',n(b.kg),n(b.bags),buy,mode,commission])}return go(res,'/loads')}
@@ -14,19 +15,19 @@ export async function actions(r,res,url,u){let b=await body(r),p=url.pathname;
  if(p==='/action/sale'){
   let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/sales');
   let sold=(await Q(`SELECT COALESCE(SUM(kg),0) s FROM sales WHERE load_id=$1`,[L.id]))[0],kg=n(b.kg);if(kg<=0||n(sold.s)+kg>n(L.arrived_kg))return go(res,`/load/${L.id}`);
-  let price=n(b.price),total=kg*price,split=paymentSplit(String(b.paymentMode||'cash'),total,b.paid),cid=null;
-  if(b.customerId){let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(C?.seller_id===L.seller_id)cid=C.id}
-  if(split.debt>0&&!cid)return go(res,`/load/${L.id}?error=customer`);
+  let price=n(b.price),total=kg*price,mode=modeFromBody(b),split=paymentSplit(mode,total,b.paid),cid=null;
+  if(mode!=='cash'&&b.customerId){let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(C?.seller_id===L.seller_id)cid=C.id}
+  if(mode!=='cash'&&!cid)return go(res,`/load/${L.id}?error=customer`);
   let files=b.__files||{},image=validImage(files.image)?files.image:null,audio=validAudio(files.audio)?files.audio:null;
   let sale=(await Q(`INSERT INTO sales(seller_id,load_id,customer_id,kg,bags,price_per_kg,total,paid_amount,debt_amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,[L.seller_id,L.id,cid,kg,n(b.bags),price,total,split.paid,split.debt]))[0];
   if(sale&&(image||audio))await Q(`INSERT INTO sale_attachments(sale_id,image_data,image_mime,audio_data,audio_mime) VALUES($1,$2,$3,$4,$5)`,[sale.id,image?.data||null,image?.mime||null,audio?.data||null,audio?.mime||null]);return go(res,`/load/${L.id}`)
  }
  if(p==='/action/payment'){
-  let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(!C||(u.role!=='manager'&&C.seller_id!==u.id))return go(res,'/debts');
-  let saleId=b.saleId?+b.saleId:null,amount=Math.max(0,n(b.amount));if(amount<=0)return go(res,'/debts');
-  if(saleId){let S=(await Q(`SELECT s.*,GREATEST(s.debt_amount-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.sale_id=s.id),0),0) remaining FROM sales s WHERE s.id=$1`,[saleId]))[0];if(!S||S.seller_id!==C.seller_id||S.customer_id!==C.id)return go(res,'/debts');amount=Math.min(amount,n(S.remaining));if(amount<=0)return go(res,'/debts')}
-  else{let D=(await Q(`SELECT GREATEST(c.opening_debt-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id=c.id AND p.sale_id IS NULL),0),0) debt FROM customers c WHERE c.id=$1`,[C.id]))[0];amount=Math.min(amount,n(D?.debt));if(amount<=0)return go(res,'/debts')}
-  await Q(`INSERT INTO payments(seller_id,customer_id,sale_id,amount,note) VALUES($1,$2,$3,$4,$5)`,[C.seller_id,C.id,saleId,amount,b.note||'']);return go(res,'/debts')
+  let back=ret(b,'/debts'),C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(!C||(u.role!=='manager'&&C.seller_id!==u.id))return go(res,back);
+  let saleId=b.saleId?+b.saleId:null,amount=Math.max(0,n(b.amount));if(amount<=0)return go(res,back);
+  if(saleId){let S=(await Q(`SELECT s.*,GREATEST(s.debt_amount-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.sale_id=s.id),0),0) remaining FROM sales s WHERE s.id=$1`,[saleId]))[0];if(!S||S.seller_id!==C.seller_id||S.customer_id!==C.id)return go(res,back);amount=Math.min(amount,n(S.remaining));if(amount<=0)return go(res,back)}
+  else{let D=(await Q(`SELECT GREATEST(c.opening_debt-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id=c.id AND p.sale_id IS NULL),0),0) debt FROM customers c WHERE c.id=$1`,[C.id]))[0];amount=Math.min(amount,n(D?.debt));if(amount<=0)return go(res,back)}
+  await Q(`INSERT INTO payments(seller_id,customer_id,sale_id,amount,note) VALUES($1,$2,$3,$4,$5)`,[C.seller_id,C.id,saleId,amount,b.note||'']);return go(res,back)
  }
  if(p==='/action/expense'){let s=u.role==='manager'?+b.sellerId:u.id,lid=null;if(b.loadId){let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(L&&(u.role==='manager'||L.seller_id===u.id)){s=L.seller_id;lid=L.id}}if(s)await Q(`INSERT INTO expenses(seller_id,load_id,name,amount,note) VALUES($1,$2,$3,$4,$5)`,[s,lid,b.name||'',n(b.amount),b.note||'']);return go(res,lid?`/load/${lid}`:'/expenses')}
  if(p==='/action/edit-load'){
@@ -38,9 +39,9 @@ export async function actions(r,res,url,u){let b=await body(r),p=url.pathname;
  if(p==='/action/edit-sale'){
   let S=(await Q(`SELECT * FROM sales WHERE id=$1`,[+b.id]))[0];if(!S||(u.role!=='manager'&&S.seller_id!==u.id))return go(res,'/sales');let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[S.load_id]))[0];
   let sold=(await Q(`SELECT COALESCE(SUM(kg),0) kg FROM sales WHERE load_id=$1 AND id<>$2`,[L.id,S.id]))[0],kg=n(b.kg);if(kg<=0||n(sold.kg)+kg>n(L.arrived_kg))return go(res,ret(b,`/load/${L.id}`));
-  let cid=null;if(b.customerId){let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(C?.seller_id===S.seller_id)cid=C.id;else return go(res,ret(b,`/load/${L.id}`))}
-  let price=n(b.price),total=kg*price,split=paymentSplit(String(b.paymentMode||'cash'),total,b.paid),repaid=n((await Q(`SELECT COALESCE(SUM(amount),0) a FROM payments WHERE sale_id=$1`,[S.id]))[0]?.a);
-  if(split.debt>0&&!cid)return go(res,ret(b,`/load/${L.id}`));if(split.debt<repaid)return go(res,ret(b,`/load/${L.id}`));
+  let mode=modeFromBody(b),cid=null;if(mode!=='cash'&&b.customerId){let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(C?.seller_id===S.seller_id)cid=C.id;else return go(res,ret(b,`/load/${L.id}`))}
+  let price=n(b.price),total=kg*price,split=paymentSplit(mode,total,b.paid),repaid=n((await Q(`SELECT COALESCE(SUM(amount),0) a FROM payments WHERE sale_id=$1`,[S.id]))[0]?.a);
+  if(mode!=='cash'&&!cid)return go(res,ret(b,`/load/${L.id}`));if(split.debt<repaid)return go(res,ret(b,`/load/${L.id}`));
   let after={customer_id:cid,kg,bags:n(b.bags),price_per_kg:price,total,paid_amount:split.paid,debt_amount:split.debt},before=saleSnap(S);
   await Q(`UPDATE sales SET customer_id=$1,kg=$2,bags=$3,price_per_kg=$4,total=$5,paid_amount=$6,debt_amount=$7 WHERE id=$8`,[after.customer_id,after.kg,after.bags,after.price_per_kg,after.total,after.paid_amount,after.debt_amount,S.id]);await audit(u,'sale',S.id,before,after);return go(res,ret(b,`/load/${L.id}`));
  }
