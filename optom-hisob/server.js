@@ -17,7 +17,7 @@ const sellerPassword=email=>({
 
 const server=http.createServer(async(r,res)=>{try{
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'individual-seller-passwords-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'sale-media-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -33,6 +33,8 @@ const server=http.createServer(async(r,res)=>{try{
  }
  const U=await user(r);
  if(!U){if(r.method==='GET'&&url.pathname==='/')return send(res,login(url.searchParams.get('error')==='1'));return go(res,'/')}
+ let am=url.pathname.match(/^\/attachment\/(\d+)\/(image|audio)$/);
+ if(r.method==='GET'&&am){let saleId=+am[1],kind=am[2],A=(await Q(`SELECT s.seller_id,a.image_data,a.image_mime,a.audio_data,a.audio_mime FROM sales s LEFT JOIN sale_attachments a ON a.sale_id=s.id WHERE s.id=$1`,[saleId]))[0];if(!A||(U.role!=='manager'&&A.seller_id!==U.id))return send(res,'Topilmadi',404);let data=kind==='image'?A.image_data:A.audio_data,mime=kind==='image'?A.image_mime:A.audio_mime;if(!data)return send(res,'Fayl yo‘q',404);res.writeHead(200,{'content-type':mime||'application/octet-stream','content-disposition':'inline','cache-control':'private, max-age=604800'});return res.end(data)}
  if(r.method==='POST'&&url.pathname.startsWith('/action/'))return actions(r,res,url,U);
  if(r.method==='GET'){
    if(await mainPages(res,url,U))return;
