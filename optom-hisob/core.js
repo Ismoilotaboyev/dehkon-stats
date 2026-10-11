@@ -9,7 +9,9 @@ export const send=(r,b,c=200,h={})=>{r.writeHead(c,{'content-type':'text/html;ch
 export const go=(r,to,h={})=>{r.writeHead(303,{location:to,...h});r.end()};
 export async function init(){
  await Q(`CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT now())`);
- await Q(`CREATE TABLE IF NOT EXISTS loads(id SERIAL PRIMARY KEY,seller_id INT NOT NULL REFERENCES users(id),name TEXT NOT NULL,product TEXT NOT NULL,arrived_kg NUMERIC DEFAULT 0,arrived_bags NUMERIC DEFAULT 0,purchase_amount NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT now())`);
+ await Q(`CREATE TABLE IF NOT EXISTS loads(id SERIAL PRIMARY KEY,seller_id INT NOT NULL REFERENCES users(id),name TEXT NOT NULL,product TEXT NOT NULL,arrived_kg NUMERIC DEFAULT 0,arrived_bags NUMERIC DEFAULT 0,purchase_amount NUMERIC DEFAULT 0,profit_mode TEXT NOT NULL DEFAULT 'own',commission_per_kg NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT now())`);
+ await Q(`ALTER TABLE loads ADD COLUMN IF NOT EXISTS profit_mode TEXT NOT NULL DEFAULT 'own'`);
+ await Q(`ALTER TABLE loads ADD COLUMN IF NOT EXISTS commission_per_kg NUMERIC DEFAULT 0`);
  await Q(`CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,seller_id INT NOT NULL REFERENCES users(id),name TEXT NOT NULL,phone TEXT,place TEXT,opening_debt NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT now())`);
  await Q(`CREATE TABLE IF NOT EXISTS sales(id SERIAL PRIMARY KEY,seller_id INT NOT NULL REFERENCES users(id),load_id INT NOT NULL REFERENCES loads(id),customer_id INT REFERENCES customers(id),kg NUMERIC DEFAULT 0,bags NUMERIC DEFAULT 0,price_per_kg NUMERIC DEFAULT 0,total NUMERIC DEFAULT 0,debt_amount NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT now())`);
  await Q(`CREATE TABLE IF NOT EXISTS payments(id SERIAL PRIMARY KEY,seller_id INT NOT NULL REFERENCES users(id),customer_id INT NOT NULL REFERENCES customers(id),amount NUMERIC DEFAULT 0,note TEXT,created_at TIMESTAMPTZ DEFAULT now())`);
