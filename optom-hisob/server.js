@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import {AP,SP,PORT,Q,body,cookies,send,go,init,user} from './core.js';
 import {login} from './ui.js';
 import {loadsPage} from './pages-loads.js';
+import {debtsPage} from './pages-debts.js';
 import {mainPages} from './pages-main.js';
 import {debtCustomerPage} from './pages-debt-profile.js';
 import {otherPages} from './pages-other.js';
@@ -24,7 +25,7 @@ const server=http.createServer(async(r,res)=>{try{
  const rawEnd=res.end.bind(res);
  res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}</body>`);return rawEnd(chunk,...args)};
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'voice-recorder-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-debts-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -45,6 +46,7 @@ const server=http.createServer(async(r,res)=>{try{
  if(r.method==='POST'&&url.pathname.startsWith('/action/'))return actions(r,res,url,U);
  if(r.method==='GET'){
    if(await loadsPage(res,url,U))return;
+   if(await debtsPage(res,url,U))return;
    if(await mainPages(res,url,U))return;
    if(await debtCustomerPage(res,url,U))return;
    if(await otherPages(res,url,U))return;
