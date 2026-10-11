@@ -1,0 +1,96 @@
+import {Q,n,e,money,dt,body,send,go,audit} from './core.js';
+import {layout} from './ui.js';
+
+let ready;
+const ensureTransfers=()=>ready||(ready=(async()=>{
+  await Q(`CREATE TABLE IF NOT EXISTS transfers(
+    id SERIAL PRIMARY KEY,
+    seller_id INT NOT NULL REFERENCES users(id),
+    load_id INT NOT NULL REFERENCES loads(id),
+    recipient TEXT NOT NULL,
+    amount NUMERIC DEFAULT 0,
+    payment_type TEXT NOT NULL DEFAULT 'bank',
+    transfer_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    note TEXT,
+    created_by INT REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await Q(`CREATE TABLE IF NOT EXISTS transfer_attachments(
+    id SERIAL PRIMARY KEY,
+    transfer_id INT UNIQUE NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+    image_data BYTEA,
+    image_mime TEXT,
+    audio_data BYTEA,
+    audio_mime TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  await Q(`CREATE INDEX IF NOT EXISTS transfers_seller_idx ON transfers(seller_id,id DESC)`);
+  await Q(`CREATE INDEX IF NOT EXISTS transfers_load_idx ON transfers(load_id,id DESC)`);
+  await Q(`CREATE INDEX IF NOT EXISTS transfers_date_idx ON transfers(transfer_date DESC,id DESC)`);
+})());
+
+const validImage=f=>f&&(/^image\//i.test(f.mime)||/\.(jpg|jpeg|png|webp|heic)$/i.test(f.filename));
+const validAudio=f=>f&&(/^audio\//i.test(f.mime)||/\.(m4a|mp3|wav|aac|ogg|webm)$/i.test(f.filename));
+const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const payLabel=x=>x==='card'?'Karta':x==='cash'?'Naqd':'Bank';
+const transferSnap=x=>({load_id:+x.load_id,recipient:String(x.recipient||''),amount:n(x.amount),payment_type:String(x.payment_type||'bank'),transfer_date:String(x.transfer_date||''),note:String(x.note||'')});
+
+const css=`<style>
+.transfer-wrap{--tg:#0d7a43;--tgs:#eaf6ee;--tl:#dce8df;--tm:#748179}
+.transfer-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.transfer-summary .card{box-shadow:0 8px 24px rgba(40,90,60,.05)}
+.transfer-panel{margin-top:12px}.transfer-panel>details>summary{padding:15px 17px;font-weight:900;color:var(--tg);background:#fbfdfb}
+.transfer-form input[type=file]{background:linear-gradient(180deg,#f8fdf9,#eef8f2);border:1px dashed #a9cbb5;padding:7px;color:#65756b}
+.transfer-form input[type=file]::file-selector-button{border:0;background:linear-gradient(145deg,#119053,#08713e);color:#fff;border-radius:9px;min-height:36px;padding:0 13px;margin-right:9px;font-weight:900}
+.transfer-list-head{display:flex;align-items:center;gap:10px;padding:15px 17px 10px}.transfer-list-head h2{margin:0;font-size:17px}.transfer-list-head .muted{margin-left:auto}
+.transfer-media{display:flex;align-items:center;gap:7px}.transfer-media audio{width:155px;max-width:100%}.transfer-receipt{min-height:34px!important;padding:6px 9px!important;font-size:10px!important}
+.transfer-mobile{display:none}
+.transfer-card{background:#fff;border:1px solid var(--tl);border-radius:15px;padding:13px}
+.transfer-card-top{display:flex;justify-content:space-between;gap:10px;align-items:center}.transfer-date{font-size:11px;color:var(--tm);font-weight:800}.transfer-pill{background:var(--tgs);color:var(--tg);border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900}
+.transfer-name{font-size:17px;font-weight:900;margin-top:8px}.transfer-load{font-size:11px;color:var(--tm);margin-top:2px}.transfer-amount{font-size:20px;font-weight:900;margin:10px 0}
+.transfer-card-meta{display:grid;grid-template-columns:1fr 1fr;gap:7px}.transfer-card-meta>div{background:#f6f9f7;border-radius:10px;padding:9px}.transfer-card-meta span{display:block;font-size:9px;color:var(--tm);font-weight:800}.transfer-card-meta b{display:block;font-size:12px;margin-top:3px}
+.transfer-note{margin-top:8px;background:#f6f9f7;border-radius:10px;padding:9px;font-size:11px;color:#536159}.transfer-card-media{margin-top:9px;display:flex;gap:7px;align-items:center;flex-wrap:wrap}.transfer-card-media audio{width:190px;max-width:100%}
+@media(max-width:900px){.transfer-summary{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.transfer-summary{grid-template-columns:1fr 1fr;gap:8px}.transfer-desktop{display:none!important}.transfer-mobile{display:grid;gap:9px;padding:0 10px 10px}.transfer-list-head{padding:13px 12px 9px}.transfer-list-head h2{font-size:16px}.transfer-list-head .muted{font-size:10px}.transfer-panel{box-shadow:none}.transfer-panel>details>summary{padding:13px}.transfer-form{padding-left:12px!important;padding-right:12px!important}.transfer-form input[type=file]{min-height:52px}.transfer-form input[type=file]::file-selector-button{min-height:38px}}
+</style>`;
+
+export async function transfersPage(res,url,u){
+  if(url.pathname!=='/transfers')return false;
+  await ensureTransfers();
+  const params=u.role==='manager'?[]:[u.id];
+  const loads=await Q(`SELECT l.id,l.name,l.product,l.seller_id,u.name seller_name,l.archived_at FROM loads l JOIN users u ON u.id=l.seller_id${u.role==='manager'?'':' WHERE l.seller_id=$1'} ORDER BY l.id DESC`,params);
+  const rows=await Q(`SELECT t.*,l.name load_name,l.product,u.name seller_name,cb.name created_by_name,(a.image_data IS NOT NULL) has_image,(a.audio_data IS NOT NULL) has_audio FROM transfers t JOIN loads l ON l.id=t.load_id JOIN users u ON u.id=t.seller_id LEFT JOIN users cb ON cb.id=t.created_by LEFT JOIN transfer_attachments a ON a.transfer_id=t.id${u.role==='manager'?'':' WHERE t.seller_id=$1'} ORDER BY t.transfer_date DESC,t.id DESC`,params);
+  const total=rows.reduce((s,x)=>s+n(x.amount),0),todayKey=today(),todayTotal=rows.filter(x=>String(x.transfer_date).slice(0,10)===todayKey).reduce((s,x)=>s+n(x.amount),0),loadCount=new Set(rows.map(x=>+x.load_id)).size;
+  const summary=`<div class="transfer-summary"><div class="card"><span>Jami o‘tkazildi</span><b>${money(total)}</b></div><div class="card"><span>Bugun o‘tkazildi</span><b>${money(todayTotal)}</b></div><div class="card"><span>O‘tkazmalar soni</span><b>${rows.length} ta</b></div><div class="card"><span>Yuklar soni</span><b>${loadCount} ta</b></div></div>`;
+  const form=`<section class="panel transfer-panel"><details><summary>+ Yangi o‘tkazma</summary><form class="form transfer-form" method="post" action="/action/transfer" enctype="multipart/form-data"><div class="grid"><label class="field">Sana<input name="transferDate" type="date" value="${todayKey}" required></label><label class="field">Yuk<select name="loadId" required><option value="">Yukni tanlang</option>${loads.map(x=>`<option value="${x.id}">${e(x.name)} · ${e(x.product)}${u.role==='manager'?' · '+e(x.seller_name):''}${x.archived_at?' · Arxiv':''}</option>`).join('')}</select></label><label class="field">Yuk beruvchi / kimga<input name="recipient" placeholder="Masalan: Anvar aka" required></label><label class="field">Summa<input name="amount" type="number" min="1" step="1" placeholder="O‘tkazilgan summa" required></label><label class="field">To‘lov turi<select name="paymentType"><option value="bank">Bank</option><option value="card">Karta</option><option value="cash">Naqd</option></select></label><label class="field">Izoh<input name="note" placeholder="Ixtiyoriy izoh"></label><label class="field">🖼 Rasm / chek <span class="muted">(ixtiyoriy)</span><input name="image" type="file" accept="image/*" capture="environment"></label><label class="field">🎙 Ovoz <span class="muted">(ixtiyoriy)</span><input name="audio" type="file" accept="audio/*"></label></div><button class="btn green" style="margin-top:12px">O‘tkazmani saqlash</button></form></details></section>`;
+  const desktopRows=rows.map((x,i)=>`<tr><td>${i+1}</td><td>${e(String(x.transfer_date).slice(0,10))}</td><td><a class="link" href="/load/${x.load_id}">${e(x.load_name)}</a><div class="muted">${e(x.product)}</div></td><td><b>${e(x.recipient)}</b></td>${u.role==='manager'?`<td>${e(x.seller_name)}</td>`:''}<td><b>${money(x.amount)}</b></td><td>${payLabel(x.payment_type)}</td><td>${x.note?e(x.note):'—'}</td><td><div class="transfer-media">${x.has_image?`<a class="btn soft transfer-receipt" target="_blank" href="/transfer-attachment/${x.id}/image">🖼 Chek</a>`:''}${x.has_audio?`<audio controls preload="none" src="/transfer-attachment/${x.id}/audio"></audio>`:''}${!x.has_image&&!x.has_audio?'—':''}</div></td><td>${e(x.created_by_name||x.seller_name)}</td></tr>`).join('');
+  const mobileCards=rows.map(x=>`<article class="transfer-card"><div class="transfer-card-top"><span class="transfer-date">${e(String(x.transfer_date).slice(0,10))}</span><span class="transfer-pill">${payLabel(x.payment_type)}</span></div><div class="transfer-name">${e(x.recipient)}</div><div class="transfer-load"><a class="link" href="/load/${x.load_id}">${e(x.load_name)}</a> · ${e(x.product)}</div><div class="transfer-amount">${money(x.amount)}</div><div class="transfer-card-meta"><div><span>Savdogar</span><b>${e(x.seller_name)}</b></div><div><span>Kiritdi</span><b>${e(x.created_by_name||x.seller_name)}</b></div></div>${x.note?`<div class="transfer-note">${e(x.note)}</div>`:''}<div class="transfer-card-media">${x.has_image?`<a class="btn soft" target="_blank" href="/transfer-attachment/${x.id}/image">🖼 Chek</a>`:''}${x.has_audio?`<audio controls preload="none" src="/transfer-attachment/${x.id}/audio"></audio>`:''}</div></article>`).join('');
+  const list=`<section class="panel transfer-panel"><div class="transfer-list-head"><h2>O‘tkazmalar tarixi</h2><span class="muted">${rows.length} ta yozuv</span></div><div class="transfer-desktop table"><table><tr><th>#</th><th>Sana</th><th>Yuk</th><th>Yuk beruvchi</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Summa</th><th>To‘lov</th><th>Izoh</th><th>Rasm / Ovoz</th><th>Kiritdi</th></tr>${desktopRows||`<tr><td colspan="10">O‘tkazma yo‘q</td></tr>`}</table></div><div class="transfer-mobile">${mobileCards||'<div class="transfer-card">O‘tkazma yo‘q</div>'}</div></section>`;
+  send(res,layout(u,'O‘tkazmalar',`${css}<div class="transfer-wrap">${summary}${form}${list}</div>`));
+  return true;
+}
+
+export async function transferAction(r,res,url,u){
+  if(url.pathname!=='/action/transfer')return false;
+  await ensureTransfers();
+  const b=await body(r),L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];
+  if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/transfers');
+  const amount=Math.max(0,n(b.amount));if(amount<=0)return go(res,'/transfers');
+  const recipient=String(b.recipient||'').trim();if(!recipient)return go(res,'/transfers');
+  const paymentType=['bank','card','cash'].includes(String(b.paymentType))?String(b.paymentType):'bank';
+  const transferDate=/^\d{4}-\d{2}-\d{2}$/.test(String(b.transferDate||''))?String(b.transferDate):today();
+  const T=(await Q(`INSERT INTO transfers(seller_id,load_id,recipient,amount,payment_type,transfer_date,note,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[L.seller_id,L.id,recipient,amount,paymentType,transferDate,String(b.note||''),u.id]))[0];
+  const files=b.__files||{},image=validImage(files.image)?files.image:null,audio=validAudio(files.audio)?files.audio:null;
+  if(T&&(image||audio))await Q(`INSERT INTO transfer_attachments(transfer_id,image_data,image_mime,audio_data,audio_mime) VALUES($1,$2,$3,$4,$5)`,[T.id,image?.data||null,image?.mime||null,audio?.data||null,audio?.mime||null]);
+  if(T)await audit(u,'transfer',T.id,{},transferSnap(T));
+  return go(res,'/transfers');
+}
+
+export async function transferAttachment(r,res,u,id,kind,sendAttachment){
+  await ensureTransfers();
+  const A=(await Q(`SELECT t.seller_id,a.image_data,a.image_mime,a.audio_data,a.audio_mime FROM transfers t LEFT JOIN transfer_attachments a ON a.transfer_id=t.id WHERE t.id=$1`,[+id]))[0];
+  if(!A||(u.role!=='manager'&&A.seller_id!==u.id)){send(res,'Topilmadi',404);return true}
+  const data=kind==='image'?A.image_data:A.audio_data,mime=kind==='image'?A.image_mime:A.audio_mime;
+  if(!data){send(res,'Fayl yo‘q',404);return true}
+  sendAttachment(r,res,data,mime,kind);return true;
+}
