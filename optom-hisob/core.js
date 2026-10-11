@@ -2,7 +2,7 @@ import {Pool} from 'pg';
 import Busboy from 'busboy';
 export const db=new Pool({connectionString:process.env.DATABASE_URL});
 export const AP=process.env.ADMIN_PASSWORD||'',SP=process.env.SELLER_PASSWORD||'',PORT=+process.env.PORT||8080;
-export const n=v=>+v||0,e=v=>String(v??'').replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])),money=v=>new Intl.NumberFormat('uz-UZ').format(n(v))+' so‘m',qty=v=>new Intl.NumberFormat('uz-UZ').format(n(v)),dt=v=>new Date(v).toLocaleDateString('uz-UZ',{timeZone:'Asia/Tashkent'}),dtt=v=>new Date(v).toLocaleString('uz-UZ',{timeZone:'Asia/Tashkent'});
+export const n=v=>+v||0,e=v=>String(v??'').replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])),money=v=>new Intl.NumberFormat('uz-UZ').format(n(v))+' so‘m',qty=v=>new Intl.NumberFormat('uz-UZ').format(n(v)),dt=v=>new Intl.DateTimeFormat('uz-UZ',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(v)),dtt=v=>new Date(v).toLocaleString('uz-UZ',{timeZone:'Asia/Tashkent'});
 export const Q=async(t,p=[])=>(await db.query(t,p)).rows;
 export const body=r=>new Promise((resolve,reject)=>{
  const ct=String(r.headers['content-type']||'');
