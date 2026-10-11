@@ -16,13 +16,15 @@ const customerStats=(c,sales,pays)=>{
  const oldPaid=P.filter(x=>!x.sale_id).reduce((a,x)=>a+n(x.amount),0);
  const openingRemaining=Math.max(0,n(c.opening_debt)-oldPaid);
  const closed=infos.filter(x=>x.closeDays!==null);
+ const openInfos=infos.filter(x=>x.remaining>0);
  const avgDays=closed.length?Math.round(closed.reduce((a,x)=>a+x.closeDays,0)/closed.length):null;
  return {
   credits:infos,
   totalCredit:n(c.opening_debt)+C.reduce((a,x)=>a+n(x.debt_amount),0),
   repaid:oldPaid+infos.reduce((a,x)=>a+n(x.repaid),0),
   currentDebt:openingRemaining+infos.reduce((a,x)=>a+n(x.remaining),0),
-  openCount:infos.filter(x=>x.remaining>0).length,
+  openCount:openInfos.length,
+  openLoadCount:new Set(openInfos.map(x=>+x.load_id).filter(Boolean)).size,
   avgDays
  };
 };
@@ -43,17 +45,17 @@ export async function debtsPage(res,url,u){
  const desktopRows=stats.map(({c,st})=>`<tr>
   <td><a class="link" href="/debts/customer/${c.id}"><b>${e(c.name)}</b></a><div class="muted">${e(c.phone||'')} ${c.place?'· '+e(c.place):''}</div></td>
   ${u.role==='manager'?`<td>${e(c.seller_name)}</td>`:''}
-  <td><b>${money(st.currentDebt)}</b></td><td>${st.credits.length}</td><td>${money(st.totalCredit)}</td><td>${money(st.repaid)}</td><td>${st.openCount}</td><td>${st.avgDays===null?'—':st.avgDays+' kun'}</td><td><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></td>
+  <td><b>${money(st.currentDebt)}</b></td><td>${st.credits.length}</td><td>${money(st.totalCredit)}</td><td>${money(st.repaid)}</td><td>${st.openLoadCount}</td><td>${st.avgDays===null?'—':st.avgDays+' kun'}</td><td><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></td>
  </tr>`).join('');
 
  const mobileCards=stats.map(({c,st})=>`<article class="debt-card-mobile">
-  <div class="debt-card-top"><span class="debt-open-label">Ochiq: ${st.openCount}</span><span class="debt-pill">Nasiya</span></div>
+  <div class="debt-card-top"><span class="debt-open-label">${st.openLoadCount} yukdan qarzi bor</span><span class="debt-pill">Nasiya</span></div>
   <a class="debt-name" href="/debts/customer/${c.id}">${e(c.name)}</a>
   ${u.role==='manager'?`<div class="debt-seller">${e(c.seller_name)}</div>`:''}
   <div class="debt-contact">${e(c.phone||'Telefon yo‘q')}${c.place?' · '+e(c.place):''}</div>
   <div class="debt-mini-stats">
    <div><span>Hozirgi qarz</span><b>${money(st.currentDebt)}</b></div>
-   <div class="debt-open-stat"><span>Ochiq nasiya</span><b>${st.openCount} ta</b></div>
+   <div class="debt-open-stat"><span>Qarzdor yuklar</span><b>${st.openLoadCount} ta</b></div>
   </div>
   <div class="debt-meta"><span>Jami nasiya: <b>${money(st.totalCredit)}</b></span><span>O‘rtacha: <b>${st.avgDays===null?'—':st.avgDays+' kun'}</b></span></div>
   <div class="debt-card-actions"><a class="btn green" href="/debts/customer/${c.id}">Ko‘rish</a></div>
@@ -81,7 +83,7 @@ export async function debtsPage(res,url,u){
  </style>`;
 
  const summary=`<div class="cards debts-summary"><div class="card"><span>Jami qolgan nasiya</span><b>${money(totalDebt)}</b></div><div class="card"><span>Nasiya mijozlar</span><b>${stats.length}</b></div><div class="card"><span>Ochiq nasiya savdolar</span><b>${openSales}</b></div><div class="card"><span>O‘rtacha yopish</span><b>${avgAll===null?'—':avgAll+' kun'}</b></div></div>`;
- const body=`${css}${summary}<section class="panel debts-panel"><div class="ph"><div><h2>Mijozlar bo‘yicha nasiya</h2><div class="muted">Bu yerda faqat hozir qarzi qolgan mijozlar ko‘rinadi. Qarzi yopilgan mijozlar Mijozlar bo‘limida qoladi.</div></div></div><div class="debts-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Hozirgi qarz</th><th>Nasiya savdo</th><th>Jami nasiya</th><th>Qaytargan</th><th>Ochiq</th><th>O‘rtacha</th><th></th></tr>${desktopRows||'<tr><td colspan="9">Ochiq nasiya yo‘q</td></tr>'}</table></div><div class="debts-mobile">${mobileCards||'<div class="card">Ochiq nasiya yo‘q</div>'}</div></section>`;
+ const body=`${css}${summary}<section class="panel debts-panel"><div class="ph"><div><h2>Mijozlar bo‘yicha nasiya</h2><div class="muted">Bu yerda faqat hozir qarzi qolgan mijozlar ko‘rinadi. Qarzi yopilgan mijozlar Mijozlar bo‘limida qoladi.</div></div></div><div class="debts-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Hozirgi qarz</th><th>Nasiya savdo</th><th>Jami nasiya</th><th>Qaytargan</th><th>Qarzdor yuklar</th><th>O‘rtacha</th><th></th></tr>${desktopRows||'<tr><td colspan="9">Ochiq nasiya yo‘q</td></tr>'}</table></div><div class="debts-mobile">${mobileCards||'<div class="card">Ochiq nasiya yo‘q</div>'}</div></section>`;
  send(res,layout(u,'Nasiyalar',body));
  return true;
 }
