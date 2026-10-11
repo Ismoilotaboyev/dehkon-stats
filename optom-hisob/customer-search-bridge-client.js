@@ -6,7 +6,7 @@ const cyrMap={
 function norm(v){
  let s=String(v||'').toLowerCase();
  s=s.replace(/[а-яёқғҳў]/g,ch=>cyrMap[ch]??ch);
- return s.replace(/o[‘’'ʻʼ`]/g,'o').replace(/g[‘’'ʻʼ`]/g,'g').replace(/[\\s()+\\-_.‘’'ʻʼ`]/g,'');
+ return s.replace(/o[‘’'ʻʼ]/g,'o').replace(/g[‘’'ʻʼ]/g,'g').replace(/[\\s()+\\-_.‘’'ʻʼ]/g,'');
 }
 function run(){
  const q=norm(input.value),rows=[...document.querySelectorAll('[data-customer-row]')],cards=[...document.querySelectorAll('[data-customer-card]')];let rd=0,rm=0;
