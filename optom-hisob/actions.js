@@ -2,7 +2,7 @@ import {Q,n,body,go,audit} from './core.js';
 const validImage=f=>f&&(/^image\//i.test(f.mime)||/\.(jpg|jpeg|png|webp|heic)$/i.test(f.filename));
 const validAudio=f=>f&&(/^audio\//i.test(f.mime)||/\.(m4a|mp3|wav|aac|ogg|webm)$/i.test(f.filename));
 const ret=(b,fallback='/')=>{let x=String(b.returnTo||'');return x.startsWith('/')&&!x.startsWith('//')?x:fallback};
-const loadSnap=x=>({name:x.name,product:x.product,arrived_kg:n(x.arrived_kg),arrived_bags:n(x.arrived_bags),purchase_amount:n(x.purchase_amount),profit_mode:x.profit_mode,commission_per_kg:n(x.commission_per_kg)});
+const loadSnap=x=>({name:x.name,product:x.product,arrived_kg:n(x.arrived_kg),arrived_bags:n(x.arrived_bags),purchase_amount:n(x.purchase_amount),profit_mode:x.profit_mode,commission_per_kg:n(x.commission_per_kg),archived_at:x.archived_at||null});
 const saleSnap=x=>({customer_id:x.customer_id?+x.customer_id:null,kg:n(x.kg),bags:n(x.bags),price_per_kg:n(x.price_per_kg),total:n(x.total),paid_amount:n(x.paid_amount),debt_amount:n(x.debt_amount)});
 const customerSnap=x=>({name:x.name,phone:x.phone||'',place:x.place||'',opening_debt:n(x.opening_debt)});
 const paymentSnap=x=>({customer_id:+x.customer_id,sale_id:x.sale_id?+x.sale_id:null,amount:n(x.amount),note:x.note||''});
@@ -11,9 +11,14 @@ const modeFromBody=b=>b.saleType?(b.saleType==='credit'?(b.creditMode==='partial
 const paymentSplit=(mode,total,raw)=>{if(mode==='debt')return{paid:0,debt:total};if(mode==='partial'){let paid=Math.max(0,Math.min(total,n(raw)));return{paid,debt:Math.max(0,total-paid)}}return{paid:total,debt:0}};
 export async function actions(r,res,url,u){let b=await body(r),p=url.pathname;
  if(p==='/action/load'){let s=u.role==='manager'?+b.sellerId:u.id;if(s){let mode=b.profitMode==='commission'?'commission':'own',buy=mode==='own'?n(b.buy):0,commission=mode==='commission'?n(b.commissionPerKg):0;await Q(`INSERT INTO loads(seller_id,name,product,arrived_kg,arrived_bags,purchase_amount,profit_mode,commission_per_kg) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[s,b.name||'',b.product||'Kartoshka',n(b.kg),n(b.bags),buy,mode,commission])}return go(res,'/loads')}
+ if(p==='/action/finish-load'){
+  let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.id]))[0];if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/loads');
+  if(!L.archived_at){let before=loadSnap(L);await Q(`UPDATE loads SET archived_at=now() WHERE id=$1`,[L.id]);let after={...before,archived_at:new Date().toISOString()};await audit(u,'load',L.id,before,after)}
+  return go(res,'/loads?tab=archive')
+ }
  if(p==='/action/customer'){let s=u.role==='manager'?+b.sellerId:u.id;if(s)await Q(`INSERT INTO customers(seller_id,name,phone,place,opening_debt) VALUES($1,$2,$3,$4,$5)`,[s,b.name||'',b.phone||'',b.place||'',n(b.debt)]);return go(res,'/customers')}
  if(p==='/action/sale'){
-  let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/sales');
+  let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/sales');if(L.archived_at)return go(res,`/load/${L.id}?error=archived`);
   let sold=(await Q(`SELECT COALESCE(SUM(kg),0) s FROM sales WHERE load_id=$1`,[L.id]))[0],kg=n(b.kg);if(kg<=0||n(sold.s)+kg>n(L.arrived_kg))return go(res,`/load/${L.id}`);
   let price=n(b.price),total=kg*price,mode=modeFromBody(b),split=paymentSplit(mode,total,b.paid),cid=null;
   if(mode!=='cash'&&b.customerId){let C=(await Q(`SELECT * FROM customers WHERE id=$1`,[+b.customerId]))[0];if(C?.seller_id===L.seller_id)cid=C.id}
@@ -29,11 +34,11 @@ export async function actions(r,res,url,u){let b=await body(r),p=url.pathname;
   else{let D=(await Q(`SELECT GREATEST(c.opening_debt-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id=c.id AND p.sale_id IS NULL),0),0) debt FROM customers c WHERE c.id=$1`,[C.id]))[0];amount=Math.min(amount,n(D?.debt));if(amount<=0)return go(res,back)}
   await Q(`INSERT INTO payments(seller_id,customer_id,sale_id,amount,note) VALUES($1,$2,$3,$4,$5)`,[C.seller_id,C.id,saleId,amount,b.note||'']);return go(res,back)
  }
- if(p==='/action/expense'){let s=u.role==='manager'?+b.sellerId:u.id,lid=null;if(b.loadId){let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(L&&(u.role==='manager'||L.seller_id===u.id)){s=L.seller_id;lid=L.id}}if(s)await Q(`INSERT INTO expenses(seller_id,load_id,name,amount,note) VALUES($1,$2,$3,$4,$5)`,[s,lid,b.name||'',n(b.amount),b.note||'']);return go(res,lid?`/load/${lid}`:'/expenses')}
+ if(p==='/action/expense'){let s=u.role==='manager'?+b.sellerId:u.id,lid=null;if(b.loadId){let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.loadId]))[0];if(L&&L.archived_at)return go(res,`/load/${L.id}?error=archived`);if(L&&(u.role==='manager'||L.seller_id===u.id)){s=L.seller_id;lid=L.id}}if(s)await Q(`INSERT INTO expenses(seller_id,load_id,name,amount,note) VALUES($1,$2,$3,$4,$5)`,[s,lid,b.name||'',n(b.amount),b.note||'']);return go(res,lid?`/load/${lid}`:'/expenses')}
  if(p==='/action/edit-load'){
   let L=(await Q(`SELECT * FROM loads WHERE id=$1`,[+b.id]))[0];if(!L||(u.role!=='manager'&&L.seller_id!==u.id))return go(res,'/loads');
   let sums=(await Q(`SELECT COALESCE(SUM(kg),0) kg,COALESCE(SUM(bags),0) bags FROM sales WHERE load_id=$1`,[L.id]))[0],kg=n(b.kg),bags=n(b.bags);if(kg<n(sums.kg)||bags<n(sums.bags))return go(res,ret(b,`/load/${L.id}`));
-  let mode=b.profitMode==='commission'?'commission':'own',after={name:String(b.name||''),product:String(b.product||'Kartoshka'),arrived_kg:kg,arrived_bags:bags,purchase_amount:mode==='own'?n(b.buy):0,profit_mode:mode,commission_per_kg:mode==='commission'?n(b.commissionPerKg):0},before=loadSnap(L);
+  let mode=b.profitMode==='commission'?'commission':'own',after={name:String(b.name||''),product:String(b.product||'Kartoshka'),arrived_kg:kg,arrived_bags:bags,purchase_amount:mode==='own'?n(b.buy):0,profit_mode:mode,commission_per_kg:mode==='commission'?n(b.commissionPerKg):0,archived_at:L.archived_at||null},before=loadSnap(L);
   await Q(`UPDATE loads SET name=$1,product=$2,arrived_kg=$3,arrived_bags=$4,purchase_amount=$5,profit_mode=$6,commission_per_kg=$7 WHERE id=$8`,[after.name,after.product,after.arrived_kg,after.arrived_bags,after.purchase_amount,after.profit_mode,after.commission_per_kg,L.id]);await audit(u,'load',L.id,before,after);return go(res,ret(b,`/load/${L.id}`));
  }
  if(p==='/action/edit-sale'){
