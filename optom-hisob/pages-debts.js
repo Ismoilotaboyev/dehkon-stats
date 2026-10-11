@@ -31,7 +31,10 @@ export async function debtsPage(res,url,u){
  if(url.pathname!=='/debts')return false;
  const d=await data(u);
  const customers=d.C.filter(c=>n(c.opening_debt)>0||d.S.some(s=>+s.customer_id===+c.id&&n(s.debt_amount)>0));
- const stats=customers.map(c=>({c,st:customerStats(c,d.S,d.P)})).sort((a,b)=>b.st.currentDebt-a.st.currentDebt);
+ const stats=customers
+  .map(c=>({c,st:customerStats(c,d.S,d.P)}))
+  .filter(x=>x.st.currentDebt>0)
+  .sort((a,b)=>b.st.currentDebt-a.st.currentDebt);
  const closedAll=stats.flatMap(x=>x.st.credits.filter(s=>s.closeDays!==null));
  const avgAll=closedAll.length?Math.round(closedAll.reduce((a,x)=>a+x.closeDays,0)/closedAll.length):null;
  const totalDebt=stats.reduce((a,x)=>a+x.st.currentDebt,0);
@@ -78,7 +81,7 @@ export async function debtsPage(res,url,u){
  </style>`;
 
  const summary=`<div class="cards debts-summary"><div class="card"><span>Jami qolgan nasiya</span><b>${money(totalDebt)}</b></div><div class="card"><span>Nasiya mijozlar</span><b>${stats.length}</b></div><div class="card"><span>Ochiq nasiya savdolar</span><b>${openSales}</b></div><div class="card"><span>O‘rtacha yopish</span><b>${avgAll===null?'—':avgAll+' kun'}</b></div></div>`;
- const body=`${css}${summary}<section class="panel debts-panel"><div class="ph"><div><h2>Mijozlar bo‘yicha nasiya</h2><div class="muted">Mijoz ustiga bosing — barcha savdosi, olgan mahsuloti, qarzi, qaytimlari va statistikasi ochiladi.</div></div></div><div class="debts-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Hozirgi qarz</th><th>Nasiya savdo</th><th>Jami nasiya</th><th>Qaytargan</th><th>Ochiq</th><th>O‘rtacha</th><th></th></tr>${desktopRows||'<tr><td colspan="9">Nasiya mijoz yo‘q</td></tr>'}</table></div><div class="debts-mobile">${mobileCards||'<div class="card">Nasiya mijoz yo‘q</div>'}</div></section>`;
+ const body=`${css}${summary}<section class="panel debts-panel"><div class="ph"><div><h2>Mijozlar bo‘yicha nasiya</h2><div class="muted">Bu yerda faqat hozir qarzi qolgan mijozlar ko‘rinadi. Qarzi yopilgan mijozlar Mijozlar bo‘limida qoladi.</div></div></div><div class="debts-desktop table"><table><tr><th>Mijoz</th>${u.role==='manager'?'<th>Savdogar</th>':''}<th>Hozirgi qarz</th><th>Nasiya savdo</th><th>Jami nasiya</th><th>Qaytargan</th><th>Ochiq</th><th>O‘rtacha</th><th></th></tr>${desktopRows||'<tr><td colspan="9">Ochiq nasiya yo‘q</td></tr>'}</table></div><div class="debts-mobile">${mobileCards||'<div class="card">Ochiq nasiya yo‘q</div>'}</div></section>`;
  send(res,layout(u,'Nasiyalar',body));
  return true;
 }
