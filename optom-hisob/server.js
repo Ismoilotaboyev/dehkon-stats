@@ -7,6 +7,7 @@ import {debtsPage} from './pages-debts.js';
 import {mainPages} from './pages-main.js';
 import {debtCustomerPage} from './pages-debt-profile.js';
 import {salesCustomersPage} from './pages-sales-customers.js';
+import {expensesPage} from './pages-expenses.js';
 import {otherPages} from './pages-other.js';
 import {actions} from './actions.js';
 import {I18N_SNIPPET} from './i18n-client.js';
@@ -61,7 +62,7 @@ const server=http.createServer(async(r,res)=>{try{
  const rawEnd=res.end.bind(res);
  res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}</body>`);return rawEnd(chunk,...args)};
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-sales-customers-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-expenses-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -92,6 +93,7 @@ const server=http.createServer(async(r,res)=>{try{
    if(await mainPages(res,url,U))return;
    if(await debtCustomerPage(res,url,U))return;
    if(await salesCustomersPage(res,url,U))return;
+   if(await expensesPage(res,url,U))return;
    if(await otherPages(res,url,U))return;
  }
  return go(res,'/');
