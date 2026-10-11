@@ -15,6 +15,7 @@ import {WORDING_SNIPPET} from './wording-client.js';
 import {VOICE_RECORDER_SNIPPET} from './voice-recorder-client.js';
 import {DEBT_RECONCILE_SNIPPET} from './debt-reconcile-client.js';
 import {CUSTOMER_SEARCH_BRIDGE_SNIPPET} from './customer-search-bridge-client.js';
+import {LOAD_ARCHIVE_SNIPPET} from './load-archive-client.js';
 
 await init();
 
@@ -62,9 +63,9 @@ function sendAttachment(r,res,data,mime,kind){
 
 const server=http.createServer(async(r,res)=>{try{
  const rawEnd=res.end.bind(res);
- res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}${DEBT_RECONCILE_SNIPPET}${CUSTOMER_SEARCH_BRIDGE_SNIPPET}</body>`);return rawEnd(chunk,...args)};
+ res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}${DEBT_RECONCILE_SNIPPET}${CUSTOMER_SEARCH_BRIDGE_SNIPPET}${LOAD_ARCHIVE_SNIPPET}</body>`);return rawEnd(chunk,...args)};
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'customer-search-cyr-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'load-archive-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -80,6 +81,12 @@ const server=http.createServer(async(r,res)=>{try{
  }
  const U=await user(r);
  if(!U){if(r.method==='GET'&&url.pathname==='/')return send(res,login(url.searchParams.get('error')==='1'));return go(res,'/')}
+ let lm=url.pathname.match(/^\/api\/load\/(\d+)\/status$/);
+ if(r.method==='GET'&&lm){
+  const L=(await Q(`SELECT id,seller_id,archived_at FROM loads WHERE id=$1`,[+lm[1]]))[0];
+  if(!L||(U.role!=='manager'&&L.seller_id!==U.id))return send(res,JSON.stringify({ok:false}),404,{'content-type':'application/json'});
+  return send(res,JSON.stringify({ok:true,archived:!!L.archived_at,archived_at:L.archived_at||null}),200,{'content-type':'application/json'});
+ }
  let am=url.pathname.match(/^\/attachment\/(\d+)\/(image|audio)$/);
  if((r.method==='GET'||r.method==='HEAD')&&am){
   let saleId=+am[1],kind=am[2],A=(await Q(`SELECT s.seller_id,a.image_data,a.image_mime,a.audio_data,a.audio_mime FROM sales s LEFT JOIN sale_attachments a ON a.sale_id=s.id WHERE s.id=$1`,[saleId]))[0];
