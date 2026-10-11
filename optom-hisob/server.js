@@ -8,13 +8,20 @@ import {actions} from './actions.js';
 
 await init();
 
+const sellerPassword=email=>({
+ 'iqrom@optom.uz':process.env.IQROM_PASSWORD,
+ 'palvannazar@optom.uz':process.env.PALVANNAZAR_PASSWORD,
+ 'rufat@optom.uz':process.env.RUFAT_PASSWORD,
+ 'asror@optom.uz':process.env.ASROR_PASSWORD
+}[email]||SP);
+
 const server=http.createServer(async(r,res)=>{try{
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'load-card-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'individual-seller-passwords-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
-   const expected=U?.role==='manager'?AP:SP;
+   const expected=U?.role==='manager'?AP:sellerPassword(email);
    if(!U||!expected||String(b.password||'')!==expected)return go(res,'/?error=1');
    const t=crypto.randomUUID()+crypto.randomUUID();
    await Q(`INSERT INTO sessions(token,user_id,expires_at) VALUES($1,$2,now()+interval '7 days')`,[t,U.id]);
