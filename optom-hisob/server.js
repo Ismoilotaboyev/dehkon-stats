@@ -21,11 +21,46 @@ const sellerPassword=email=>({
  'asror@optom.uz':process.env.ASROR_PASSWORD
 }[email]||SP);
 
+function sendAttachment(r,res,data,mime,kind){
+ const buf=Buffer.isBuffer(data)?data:Buffer.from(data);
+ const size=buf.length;
+ const common={
+  'content-type':mime||'application/octet-stream',
+  'content-disposition':'inline',
+  'cache-control':'private, max-age=604800',
+  'x-content-type-options':'nosniff'
+ };
+ if(kind!=='audio'){
+  res.writeHead(200,{...common,'content-length':size});
+  return r.method==='HEAD'?res.end():res.end(buf);
+ }
+ const range=String(r.headers.range||'');
+ const base={...common,'accept-ranges':'bytes'};
+ if(!range){
+  res.writeHead(200,{...base,'content-length':size});
+  return r.method==='HEAD'?res.end():res.end(buf);
+ }
+ const m=range.match(/^bytes=(\d*)-(\d*)$/);
+ if(!m){res.writeHead(416,{...base,'content-range':`bytes */${size}`});return res.end()}
+ let start=m[1]?Number(m[1]):NaN,end=m[2]?Number(m[2]):NaN;
+ if(Number.isNaN(start)){
+  const suffix=end;
+  if(!Number.isFinite(suffix)||suffix<=0){res.writeHead(416,{...base,'content-range':`bytes */${size}`});return res.end()}
+  start=Math.max(0,size-suffix);end=size-1;
+ }else{
+  if(Number.isNaN(end)||end>=size)end=size-1;
+ }
+ if(start<0||end<start||start>=size){res.writeHead(416,{...base,'content-range':`bytes */${size}`});return res.end()}
+ const chunk=buf.subarray(start,end+1);
+ res.writeHead(206,{...base,'content-range':`bytes ${start}-${end}/${size}`,'content-length':chunk.length});
+ return r.method==='HEAD'?res.end():res.end(chunk);
+}
+
 const server=http.createServer(async(r,res)=>{try{
  const rawEnd=res.end.bind(res);
  res.end=(chunk,...args)=>{if(typeof chunk==='string'&&chunk.includes('</body>')&&!chunk.includes('optom_hisob_lang'))chunk=chunk.replace('</body>',`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}</body>`);return rawEnd(chunk,...args)};
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-debts-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'mobile-audio-range-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -42,7 +77,13 @@ const server=http.createServer(async(r,res)=>{try{
  const U=await user(r);
  if(!U){if(r.method==='GET'&&url.pathname==='/')return send(res,login(url.searchParams.get('error')==='1'));return go(res,'/')}
  let am=url.pathname.match(/^\/attachment\/(\d+)\/(image|audio)$/);
- if(r.method==='GET'&&am){let saleId=+am[1],kind=am[2],A=(await Q(`SELECT s.seller_id,a.image_data,a.image_mime,a.audio_data,a.audio_mime FROM sales s LEFT JOIN sale_attachments a ON a.sale_id=s.id WHERE s.id=$1`,[saleId]))[0];if(!A||(U.role!=='manager'&&A.seller_id!==U.id))return send(res,'Topilmadi',404);let data=kind==='image'?A.image_data:A.audio_data,mime=kind==='image'?A.image_mime:A.audio_mime;if(!data)return send(res,'Fayl yo‘q',404);res.writeHead(200,{'content-type':mime||'application/octet-stream','content-disposition':'inline','cache-control':'private, max-age=604800'});return res.end(data)}
+ if((r.method==='GET'||r.method==='HEAD')&&am){
+  let saleId=+am[1],kind=am[2],A=(await Q(`SELECT s.seller_id,a.image_data,a.image_mime,a.audio_data,a.audio_mime FROM sales s LEFT JOIN sale_attachments a ON a.sale_id=s.id WHERE s.id=$1`,[saleId]))[0];
+  if(!A||(U.role!=='manager'&&A.seller_id!==U.id))return send(res,'Topilmadi',404);
+  let data=kind==='image'?A.image_data:A.audio_data,mime=kind==='image'?A.image_mime:A.audio_mime;
+  if(!data)return send(res,'Fayl yo‘q',404);
+  return sendAttachment(r,res,data,mime,kind);
+ }
  if(r.method==='POST'&&url.pathname.startsWith('/action/'))return actions(r,res,url,U);
  if(r.method==='GET'){
    if(await loadsPage(res,url,U))return;
