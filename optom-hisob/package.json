@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {"start": "node index.js"},
-  "dependencies": {"pg": "^8.13.1"}
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "pg": "^8.13.1"
+  }
 }
