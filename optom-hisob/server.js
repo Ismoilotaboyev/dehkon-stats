@@ -10,6 +10,7 @@ import {debtCustomerPage} from './pages-debt-profile.js';
 import {salesCustomersPage} from './pages-sales-customers.js';
 import {expensesPage} from './pages-expenses.js';
 import {transfersPage,transferAction,transferAttachment} from './pages-transfers.js';
+import {partnersPage,partnerAction} from './pages-partners.js';
 import {legacyDebtAction,legacyDebtAttachment} from './legacy-debts.js';
 import {runLegacyPage1IqromMigration} from './migrations-legacy.js';
 import {otherPages} from './pages-other.js';
@@ -21,6 +22,7 @@ import {DEBT_RECONCILE_SNIPPET} from './debt-reconcile-client.js';
 import {CUSTOMER_SEARCH_BRIDGE_SNIPPET} from './customer-search-bridge-client.js';
 import {LOAD_ARCHIVE_SNIPPET} from './load-archive-client.js';
 import {TRANSFERS_NAV_SNIPPET} from './transfers-nav-client.js';
+import {PARTNERS_NAV_SNIPPET} from './partners-nav-client.js';
 
 await init();
 await runLegacyPage1IqromMigration();
@@ -78,12 +80,13 @@ const server=http.createServer(async(r,res)=>{try{
    if(!chunk.includes('optom_hisob_lang'))extra+=`${I18N_SNIPPET}${WORDING_SNIPPET}${VOICE_RECORDER_SNIPPET}${DEBT_RECONCILE_SNIPPET}${CUSTOMER_SEARCH_BRIDGE_SNIPPET}`;
    if(!chunk.includes('data-load-finish-control'))extra+=LOAD_ARCHIVE_SNIPPET;
    if(!chunk.includes('data-transfers-nav'))extra+=TRANSFERS_NAV_SNIPPET;
+   if(!chunk.includes('data-partners-nav'))extra+=PARTNERS_NAV_SNIPPET;
    if(extra)chunk=chunk.replace('</body>',`${extra}</body>`);
   }
   return rawEnd(chunk,...args)
  };
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'legacy-debts-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'partner-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -118,6 +121,7 @@ const server=http.createServer(async(r,res)=>{try{
  let ldm=url.pathname.match(/^\/legacy-debt-attachment\/(\d+)\/(image|audio)$/);
  if((r.method==='GET'||r.method==='HEAD')&&ldm)return legacyDebtAttachment(r,res,U,+ldm[1],ldm[2],sendAttachment);
  if(r.method==='POST'&&url.pathname==='/action/transfer')return transferAction(r,res,url,U);
+ if(r.method==='POST'&&url.pathname.startsWith('/action/partner-'))return partnerAction(r,res,url,U);
  if(r.method==='POST'&&['/action/legacy-debt','/action/archive-legacy-debt','/action/unarchive-legacy-debt'].includes(url.pathname))return legacyDebtAction(r,res,url,U);
  if(r.method==='POST'&&url.pathname.startsWith('/action/'))return actions(r,res,url,U);
  if(r.method==='GET'){
@@ -129,6 +133,7 @@ const server=http.createServer(async(r,res)=>{try{
    if(await salesCustomersPage(res,url,U))return;
    if(await expensesPage(res,url,U))return;
    if(await transfersPage(res,url,U))return;
+   if(await partnersPage(res,url,U))return;
    if(await otherPages(res,url,U))return;
  }
  return go(res,'/');
