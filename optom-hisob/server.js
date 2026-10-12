@@ -11,6 +11,7 @@ import {salesCustomersPage} from './pages-sales-customers.js';
 import {expensesPage} from './pages-expenses.js';
 import {transfersPage,transferAction,transferAttachment} from './pages-transfers.js';
 import {legacyDebtAction,legacyDebtAttachment} from './legacy-debts.js';
+import {runLegacyPage1IqromMigration} from './migrations-legacy.js';
 import {otherPages} from './pages-other.js';
 import {actions} from './actions.js';
 import {I18N_SNIPPET} from './i18n-client.js';
@@ -22,6 +23,7 @@ import {LOAD_ARCHIVE_SNIPPET} from './load-archive-client.js';
 import {TRANSFERS_NAV_SNIPPET} from './transfers-nav-client.js';
 
 await init();
+await runLegacyPage1IqromMigration();
 
 const sellerPassword=email=>({
  'iqrom@optom.uz':process.env.IQROM_PASSWORD,
