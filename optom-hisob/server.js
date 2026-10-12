@@ -10,6 +10,7 @@ import {debtCustomerPage} from './pages-debt-profile.js';
 import {salesCustomersPage} from './pages-sales-customers.js';
 import {expensesPage} from './pages-expenses.js';
 import {transfersPage,transferAction,transferAttachment} from './pages-transfers.js';
+import {legacyDebtAction,legacyDebtAttachment} from './legacy-debts.js';
 import {otherPages} from './pages-other.js';
 import {actions} from './actions.js';
 import {I18N_SNIPPET} from './i18n-client.js';
@@ -80,7 +81,7 @@ const server=http.createServer(async(r,res)=>{try{
   return rawEnd(chunk,...args)
  };
  const url=new URL(r.url||'/',`http://${r.headers.host||'localhost'}`);
- if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'transfers-v1'}),200,{'content-type':'application/json'});
+ if(url.pathname==='/api/health')return send(res,JSON.stringify({ok:true,version:'legacy-debts-v1'}),200,{'content-type':'application/json'});
  if(r.method==='POST'&&url.pathname==='/login'){
    const b=await body(r),email=String(b.email||'').trim().toLowerCase();
    const U=(await Q(`SELECT id,name,email,role FROM users WHERE email=$1`,[email]))[0];
@@ -112,7 +113,10 @@ const server=http.createServer(async(r,res)=>{try{
  }
  let tm=url.pathname.match(/^\/transfer-attachment\/(\d+)\/(image|audio)$/);
  if((r.method==='GET'||r.method==='HEAD')&&tm)return transferAttachment(r,res,U,+tm[1],tm[2],sendAttachment);
+ let ldm=url.pathname.match(/^\/legacy-debt-attachment\/(\d+)\/(image|audio)$/);
+ if((r.method==='GET'||r.method==='HEAD')&&ldm)return legacyDebtAttachment(r,res,U,+ldm[1],ldm[2],sendAttachment);
  if(r.method==='POST'&&url.pathname==='/action/transfer')return transferAction(r,res,url,U);
+ if(r.method==='POST'&&['/action/legacy-debt','/action/archive-legacy-debt','/action/unarchive-legacy-debt'].includes(url.pathname))return legacyDebtAction(r,res,url,U);
  if(r.method==='POST'&&url.pathname.startsWith('/action/'))return actions(r,res,url,U);
  if(r.method==='GET'){
    if(await loadsPage(res,url,U))return;
