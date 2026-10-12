@@ -1,0 +1,6 @@
+FROM python:3.12-slim
+RUN apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY shorts_service.py /app/shorts_service.py
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-u", "/app/shorts_service.py"]
