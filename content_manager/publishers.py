@@ -1,0 +1,108 @@
+"""Official publishing APIs. Publish errors are raised and recorded, never treated as success."""
+import os
+import json
+import time
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+import requests
+from .config import env, decrypt, encrypt
+from .models import Session, Account
+
+
+def s3():
+    import boto3
+    return boto3.client('s3',endpoint_url=env('S3_ENDPOINT_URL'),aws_access_key_id=env('S3_ACCESS_KEY_ID'),aws_secret_access_key=env('S3_SECRET_ACCESS_KEY'),region_name=env('S3_REGION','auto'))
+
+
+def upload_blob(local, key):
+    s3().upload_file(str(local), env('S3_BUCKET'),key,ExtraArgs={'ContentType':'video/mp4'})
+    return key
+
+
+def download_blob(key, local):
+    s3().download_file(env('S3_BUCKET'), key, str(local))
+    return local
+
+
+def public_temporary_url(key, expires=3600):
+    return s3().generate_presigned_url('get_object',Params={'Bucket':env('S3_BUCKET'),'Key':key},ExpiresIn=expires)
+
+
+def api_json(response):
+    try:data=response.json()
+    except Exception:data={'body':response.text[:400]}
+    if not response.ok:raise RuntimeError(f'API error {response.status_code}: {str(data)[:800]}')
+    return data
+
+
+IG_BASE_REFRESH='https://graph.instagram.com/refresh_access_token'
+
+def ig_publish(account:Account,surface:str,video_key:str,caption:str):
+    """Uses Instagram Login API (graph.instagram.com), not Facebook Login.
+    Trial params must be tested against the specific app and account; disabled by default.
+    """
+    if surface=='instagram_trial' and env('IG_ENABLE_TRIAL','false').lower()!='true':
+        raise RuntimeError('Instagram Trial feature not enabled/verified for this Meta application')
+    creds=json.loads(decrypt(account.encrypted_credentials)); token=creds['access_token']
+    if int(creds.get('expires_at',0)) and int(creds.get('expires_at',0))-int(time.time())<7*86400:
+        renew=api_json(requests.get(IG_BASE_REFRESH,params={'grant_type':'ig_refresh_token','access_token':token},timeout=30))
+        token=renew['access_token'];creds['access_token']=token;creds['expires_at']=int(time.time())+int(renew.get('expires_in',5184000))
+        with Session.begin() as db:db.get(Account,account.id).encrypted_credentials=encrypt(json.dumps(creds))
+    host='https://graph.instagram.com/'+env('IG_API_VERSION','v24.0')
+    params={'access_token':token,'video_url':public_temporary_url(video_key)}
+    if surface=='instagram_story':params['media_type']='STORIES'
+    elif surface in ('instagram_reels','instagram_trial'):
+        params.update({'media_type':'REELS','caption':caption[:2200]})
+        if surface=='instagram_trial':
+            params['trial_params']=json.dumps({'graduation_strategy':'manual'})
+    else:raise ValueError('Invalid Instagram surface')
+    d=api_json(requests.post(f'{host}/{account.external_id}/media',data=params,timeout=60))
+    container_id=d['id']
+    for attempt in range(40):
+        status=api_json(requests.get(f'{host}/{container_id}',params={'fields':'status_code,status','access_token':token},timeout=30))
+        if status.get('status_code')=='FINISHED':break
+        if status.get('status_code') in ('ERROR','EXPIRED'):
+            raise RuntimeError('Instagram media processing failed: '+str(status)[:300])
+        time.sleep(10)
+    else:raise RuntimeError('Instagram processing timeout: container='+container_id+'. Check before retrying.')
+    d=api_json(requests.post(f'{host}/{account.external_id}/media_publish',data={'creation_id':container_id,'access_token':token},timeout=90))
+    return str(d['id'])
+
+
+def youtube_publish(account:Account, file_path, title, description):
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    creds=json.loads(decrypt(account.encrypted_credentials))
+    credentials=Credentials(token=creds.get('access_token'),refresh_token=creds.get('refresh_token'),
+        token_uri='https://oauth2.googleapis.com/token',client_id=env('GOOGLE_CLIENT_ID'),
+        client_secret=env('GOOGLE_CLIENT_SECRET'),scopes=['https://www.googleapis.com/auth/youtube.upload','https://www.googleapis.com/auth/youtube.readonly'])
+    if creds.get('expires_at',0)<int(time.time())+120 or not credentials.valid:
+        credentials.refresh(Request())
+        creds['access_token']=credentials.token
+        creds['expires_at']=int(time.time())+3500
+        if credentials.refresh_token:creds['refresh_token']=credentials.refresh_token
+        with Session.begin() as db:
+            a=db.get(Account,account.id); a.encrypted_credentials=encrypt(json.dumps(creds))
+    service=build('youtube','v3',credentials=credentials,cache_discovery=False)
+    request=service.videos().insert(part='snippet,status',body={'snippet':{'title':title[:100] or 'Video #Shorts',
+        'description':description[:4900]},'status':{'privacyStatus':'public'}},
+        media_body=MediaFileUpload(str(file_path),mimetype='video/mp4',chunksize=8*1024*1024,resumable=True))
+    result=None
+    while result is None:
+        _,result=request.next_chunk()
+    return str(result['id'])
+
+
+def telegram_business_story(account:Account,path,caption,duration):
+    from .telegram_api import telegram
+    if duration>60:raise ValueError('Telegram Story video 60 soniyadan uzun, avtomatik kesilmaydi')
+    if os.path.getsize(path)>30*1024*1024:raise ValueError('Telegram Story uchun video 30 MB dan katta')
+    with open(path,'rb') as f:
+        data=telegram('postStory',{
+            'business_connection_id':account.external_id,
+            'content':json.dumps({'type':'video','video':'attach://story_video','duration':int(duration)}),
+            'active_period':'86400', 'caption':caption[:2048]
+        },files={'story_video':('story.mp4',f,'video/mp4')})
+    return str(data.get('id',''))
