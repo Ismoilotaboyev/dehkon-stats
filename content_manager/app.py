@@ -8,6 +8,7 @@ from .models import init_db, migrate
 from .auth import instagram_callback, youtube_callback
 from .bot import handle_text, handle_video, handle_callback, handle_business_connection
 
+logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s: %(message)s')
 log=logging.getLogger('content_manager')
 
 
@@ -17,6 +18,9 @@ async def lifespan(app:FastAPI):
     if missing: log.warning('Missing required env vars: %s', ', '.join(missing))
     migrate()  # alembic upgrade head; fails the deploy instead of running on an outdated schema
     init_db()
+    import threading
+    from .setup_webhook import ensure_webhook
+    threading.Thread(target=ensure_webhook, daemon=True, name='webhook-setup').start()
     yield
 
 

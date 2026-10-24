@@ -54,9 +54,7 @@ Python 3.12 + FastAPI, PostgreSQL, Redis/RQ, Railway S3 bucket, OpenAI Speech-to
    - `SUPERADMIN_TELEGRAM_IDS` majburiy: videolarni shu odamlar tasdiqlaydi.
 6. Meta Developers Instagram Login: redirect URL EXACT `https://DOMAIN/oauth/instagram/callback`.
 7. Google Cloud OAuth client: redirect URL EXACT `https://DOMAIN/oauth/youtube/callback`; YouTube Data API v3 yoqilsin.
-8. Webhookni bir marta sozlang (Railway `content-api` environment’ida, `telegram-bot-api` servisi ishga tushgach):
-   `python -m content_manager.setup_webhook --logout-cloud`
-   Bu botni `api.telegram.org` dan chiqaradi (`logOut`) va webhookni Local Bot API server orqali qo‘yadi. Shundan keyin bot 10 daqiqa davomida cloud serverga qaytolmaydi. Keyingi safar webhookni yangilash uchun `--logout-cloud` siz ishga tushiring.
+8. Webhook avtomatik: `content-api` har ishga tushganda (fon rejimida) `telegram-bot-api` servisini kutadi, webhook bizning URL emasligini ko‘rsa, botni `api.telegram.org` dan chiqaradi (`logOut`) va webhookni Local Bot API orqali qo‘yadi. O‘chirish: `AUTO_SET_WEBHOOK=false`. Qo‘lda: `python -m content_manager.setup_webhook --logout-cloud`. `logOut` dan keyin bot 10 daqiqa cloud serverga qaytolmaydi.
 9. Telegram `@BotFather` orqali biznes ulanish imkoniyatlarini yoqing va Business profile tarafidan `can_manage_stories` ruxsatini bering.
 10. `/start` → `/connectig dehkon-dorixona` → login orqali ulash; `/connectyoutube dehkon-dorixona`; Telegram Business ulanganidan so‘ng `/bindbiz UUID dehkon-dorixona`.
 11. `dehkon-dorixona` da 4 ta format default yoqilgan (Story, Reels, YouTube Shorts, Telegram Business Story). Har bir video joylanishidan oldin sizga preview keladi; o‘chirish/yoqish botdagi ⚙️ Formatlar menyusida.

@@ -245,3 +245,26 @@ def test_prepare_approve_publish(e2e, monkeypatch):
     assert st[('instagram_story', 1)] == 'needs_review' and st[('instagram_story', 2)] == 'skipped'
     assert st[('telegram_business_story', 2)] == 'published' and st[('youtube_shorts', 1)] == 'published'
     assert any('Instagram Story (2/2)' in r and 'oldingi qism' in r for r in results)
+
+
+# ---------- webhook auto-setup ----------
+
+def test_ensure_webhook_sets_once(monkeypatch):
+    from content_manager import setup_webhook as sw
+    monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 't'); monkeypatch.setenv('TELEGRAM_WEBHOOK_SECRET', 's')
+    monkeypatch.setenv('PUBLIC_BASE_URL', 'https://x.up.railway.app')
+    monkeypatch.setenv('TELEGRAM_LOCAL_MODE', 'true'); monkeypatch.setenv('TELEGRAM_API_BASE', 'http://botapi:8081')
+    state = {'url': '', 'calls': [], 'logout': 0}
+
+    def fake(method, payload=None, files=None, timeout=0):
+        state['calls'].append(method)
+        if method == 'getWebhookInfo':
+            return {'url': state['url']}
+        if method == 'setWebhook':
+            state['url'] = payload['url']; return True
+    monkeypatch.setattr(sw, 'telegram', fake)
+    monkeypatch.setattr(sw, 'logout_cloud', lambda: state.__setitem__('logout', state['logout'] + 1) or {'ok': True})
+    sw.ensure_webhook(attempts=1, delay=0)
+    assert state['url'] == 'https://x.up.railway.app/telegram/webhook' and state['logout'] == 1
+    sw.ensure_webhook(attempts=1, delay=0)  # second start: already set, no logout, no set
+    assert state['logout'] == 1 and state['calls'].count('setWebhook') == 1
