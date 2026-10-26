@@ -92,7 +92,8 @@ def queue_reels_sync(now, window=timedelta(minutes=20)):
     """At each Reels→YouTube slot (Tashkent time) queue one upload per brand, once."""
     local = now.astimezone(TZ)
     with Session() as db:
-        brands = [(b.slug, b.reels_sync_slots) for b in db.scalars(select(Brand).where(Brand.reels_sync == True))]
+        brands = [(b.slug, b.reels_sync_slots) for b in db.scalars(select(Brand).where(Brand.reels_sync == True))
+                  if not (b.reels_sync_paused_until and aware(b.reels_sync_paused_until) > now)]
     queued = []
     r = None
     for slug, raw in brands:

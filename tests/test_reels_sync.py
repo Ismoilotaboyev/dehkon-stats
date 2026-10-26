@@ -101,3 +101,87 @@ def test_scheduler_queues_each_slot_once(monkeypatch):
     scheduler.queue_reels_sync(at_21)
     assert q.jobs[-1] == ('content_manager.reels_sync.upload_next', ('rs-brand', True))
     assert scheduler.queue_reels_sync(datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc)) == []   # 12:00, no slot
+
+
+# ---------- control panel ----------
+
+@pytest.fixture
+def ui(monkeypatch):
+    from content_manager import bot
+    sent, jobs, store = [], [], {}
+    class Q:
+        def enqueue(self, fn, *a, **k): jobs.append((fn, a))
+    class R:
+        def get(self, k): return store.get(k)
+        def setex(self, k, t, v): store[k] = v
+        def delete(self, k): store.pop(k, None)
+        def set(self, k, v, ex=None, nx=False):
+            if nx and k in store: return None
+            store[k] = v; return True
+    monkeypatch.setattr(bot, 'send', lambda chat, text, markup=None: sent.append((text, markup)))
+    monkeypatch.setattr(bot, 'media_queue', lambda: Q())
+    monkeypatch.setattr(bot, 'rclient', lambda: R())
+    with Session.begin() as db:
+        b = db.get(Brand, 'rs-brand'); b.reels_sync = True; b.reels_sync_paused_until = None
+        b.reels_sync_slots = '10:00, 21:00'
+    return bot, sent, jobs, store
+
+
+def _buttons(markup):
+    return [b['callback_data'] for row in markup['inline_keyboard'] for b in row]
+
+
+def test_panel_from_keyboard_and_pause(ui, monkeypatch):
+    bot, sent, jobs, _ = ui
+    bot.admin_action(1, 1, 'kb:reels')
+    text, markup = sent[-1]
+    assert text.startswith('📺 YouTube ko‘chirish — Dehqon Dorixona') and 'Holat: ✅ Ishlayapti' in text
+    assert 'kuniga 2 ta' in text and 'rs:pausemenu:rs-brand' in _buttons(markup) and 'rs:now:rs-brand' in _buttons(markup)
+    bot.admin_action(1, 1, 'rs:pause:rs-brand:3')
+    assert '⏸ To‘xtatilgan:' in sent[-1][0] and 'rs:on:rs-brand' in _buttons(sent[-1][1])
+    class Q:
+        jobs = []
+        def enqueue(self, fn, *a, **k): self.jobs.append(fn)
+    class R:
+        def set(self, *a, **k): return True
+    monkeypatch.setattr(scheduler, '_queue', lambda: Q())
+    monkeypatch.setattr(scheduler, '_redis', lambda: R())
+    at_10 = datetime(2026, 10, 26, 5, 3, tzinfo=timezone.utc)
+    assert scheduler.queue_reels_sync(at_10) == []        # paused: nothing queued
+    bot.admin_action(1, 1, 'rs:on:rs-brand')
+    assert 'Holat: ✅ Ishlayapti' in sent[-1][0]
+    bot.admin_action(1, 1, 'rs:pause:rs-brand:0')
+    assert 'muddatsiz' in sent[-1][0]
+
+
+def test_panel_presets_slots_now_queue(ui):
+    bot, sent, jobs, store = ui
+    bot.admin_action(1, 1, 'rs:preset:rs-brand:6')
+    with Session() as db:
+        assert db.get(Brand, 'rs-brand').reels_sync_slots.count(':') == 6
+    bot.admin_action(1, 1, 'rs:slots:rs-brand')
+    assert store['pending:1'] == 'rsslots:rs-brand'
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '9:30 20:00'})
+    with Session() as db:
+        assert db.get(Brand, 'rs-brand').reels_sync_slots == '09:30, 20:00'
+    bot.admin_action(1, 1, 'rs:now:rs-brand')
+    assert jobs[-1] == ('content_manager.reels_sync.upload_next', ('rs-brand', False, True))
+    with Session.begin() as db:
+        db.add(IgSync(ig_media_id='Q1', brand_slug='rs-brand', caption='Navbat video\nx', permalink='pq1', status='queued',
+                      posted_at=datetime(2026, 10, 25, tzinfo=timezone.utc)))
+    bot.admin_action(1, 1, 'rs:queue:rs-brand')
+    assert 'Navbat video' in sent[-1][0] and 'rs:skip:rs-brand:Q1' in _buttons(sent[-1][1])
+    bot.admin_action(1, 1, 'rs:skip:rs-brand:Q1')
+    with Session() as db:
+        assert db.get(IgSync, 'Q1').status == 'skipped'
+
+
+def test_manual_upload_runs_even_when_paused(apis, ui):
+    bot, *_ = ui
+    bot.admin_action(1, 1, 'rs:pause:rs-brand:0')
+    with Session.begin() as db:
+        db.add(IgSync(ig_media_id='M7', brand_slug='rs-brand', caption='Qo‘lda', status='queued',
+                      posted_at=datetime(2026, 10, 26, tzinfo=timezone.utc)))
+    assert reels_sync.upload_next('rs-brand') is None                 # automatic: paused
+    yid = reels_sync.upload_next('rs-brand', manual=True)
+    assert yid and 'youtube.com/shorts/' in apis['notes'][-1]

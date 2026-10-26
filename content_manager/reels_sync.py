@@ -6,7 +6,7 @@ Runs on the worker; the scheduler queues upload_next at each of Brand.reels_sync
 """
 import logging
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from sqlalchemy import select
 from .models import Session, Brand, Account, Publication, IgSync, Audit
@@ -74,17 +74,25 @@ def _mark(mid, status, details='', youtube_id=''):
             r.youtube_id = youtube_id; r.uploaded_at = now_utc()
 
 
-def upload_next(slug, last_of_day=False):
-    """Upload one Reel (skipping unusable ones). Returns the YouTube id or None."""
+def is_paused(brand, now=None):
+    until = aware(brand.reels_sync_paused_until)
+    return bool(until and until > (now or now_utc()))
+
+
+def upload_next(slug, last_of_day=False, manual=False):
+    """Upload one Reel (skipping unusable ones). Returns the YouTube id or None.
+    manual=True (⚡ button): runs even when paused/off and reports the result right away."""
     from .publishers import ig_media_url, download_url, youtube_publish
     from .worker import media_info
     with Session() as db:
         b = db.get(Brand, slug)
-        if not b or not b.reels_sync:
+        if not b or (not manual and (not b.reels_sync or is_paused(b))):
             return None
         brand_name = b.name
         ig, yt = _account(db, slug, 'instagram'), _account(db, slug, 'youtube')
     if not ig or not yt:
+        if manual:
+            notify_admins('📺 Instagram yoki YouTube akkaunti ulanmagan.')
         return None
     try:
         scan(slug)
@@ -123,7 +131,11 @@ def upload_next(slug, last_of_day=False):
         with Session.begin() as db:
             db.add(Audit(actor=0, action='reels_sync_uploaded', brand_slug=slug, details=f'{mid}->{yid}'))
         result = yid
+        if manual:
+            notify_admins(f'📺 YouTube’ga joylandi: https://youtube.com/shorts/{yid}\n(Instagram: {permalink})')
         break
+    if manual and result is None:
+        notify_admins('📺 Joylanadigan video topilmadi yoki xato bo‘ldi.\n' + status_text(slug))
     if last_of_day:
         send_daily_summary(slug)
     return result
@@ -141,6 +153,36 @@ def status_counts(slug):
     return out
 
 
+def next_run(brand, now=None):
+    """Next automatic upload time, or None when off/paused indefinitely."""
+    from .timeutil import parse_slots, upcoming
+    now = now or now_utc()
+    if not brand.reels_sync:
+        return None
+    start = max(now, aware(brand.reels_sync_paused_until) or now)
+    try:
+        slots = parse_slots(brand.reels_sync_slots or '')
+    except ValueError:
+        return None
+    return next(upcoming(slots, start, min_gap=timedelta(0)), None) if slots else None
+
+
+def queue_preview(slug, n=5):
+    with Session() as db:
+        rows = db.scalars(select(IgSync).where(IgSync.brand_slug == slug, IgSync.status == 'queued')).all()
+    rows.sort(key=lambda r: aware(r.posted_at) or aware(r.created_at), reverse=True)
+    return rows[:n]
+
+
+def skip(slug, mid):
+    with Session.begin() as db:
+        r = db.get(IgSync, mid)
+        if not r or r.brand_slug != slug or r.status != 'queued':
+            return False
+        r.status = 'skipped'; r.details = 'Super Admin o‘tkazib yubordi'
+    return True
+
+
 def status_text(slug):
     c = status_counts(slug)
     return (f'📺 Reels → YouTube Shorts\nBugun joylandi: {c["today"]} · Jami: {c["uploaded"]}\n'
@@ -149,3 +191,11 @@ def status_text(slug):
 
 def send_daily_summary(slug):
     notify_admins(status_text(slug))
+
+
+def scan_and_report(slug):
+    try:
+        n = scan(slug)
+    except Exception as exc:
+        notify_admins(f'🔄 Instagram’dan ro‘yxat olinmadi: {str(exc)[:200]}'); return
+    notify_admins(f'🔄 Yangilandi: {n} ta yangi Reels navbatga qo‘shildi.\n\n' + status_text(slug))

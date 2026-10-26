@@ -3,8 +3,8 @@ import json
 import secrets
 from sqlalchemy import select
 from .models import Session, Brand, Membership, Account, Video, Audit, Publication
-from .timeutil import parse_slots, quick_choices, label as tlabel, aware, now_utc
-from datetime import datetime, timezone
+from .timeutil import parse_slots, quick_choices, label as tlabel, aware, now_utc, TZ
+from datetime import datetime, timezone, timedelta
 from .config import superadmins, env
 from .telegram_api import send, inline, telegram, notify_admins
 from .auth import start_auth
@@ -54,6 +54,7 @@ ADMIN_BUTTONS={
     '🏪 Loyihalar':'admin:brands', '⚙️ Formatlar':'kb:formats',
     '🔗 Akkauntlar':'kb:accounts', '👥 Xodimlar':'kb:staff',
     '📊 Hisobot':'admin:report', '➕ Brend qo‘shish':'admin:addbrand',
+    '📺 YouTube ko‘chirish':'kb:reels',
 }
 STAFF_BUTTONS={'🏷 Brendlarim':'brands','📖 Yordam':'help'}
 STAFF_HELP=('🎬 Videoni shu chatga yuboring (oddiy video yoki fayl, 2 GB gacha).\n'
@@ -108,6 +109,16 @@ def handle_text(msg):
         add_brand(actor,chat,raw); return
     if state and state.startswith('setslots:') and not raw.startswith('/'):
         set_slots(actor,chat,state.split(':',1)[1],raw); return
+    if state and state.startswith('rsslots:') and not raw.startswith('/'):
+        slug=state.split(':',1)[1]
+        try:slots=parse_slots(raw)
+        except ValueError as exc:send(chat,'⚠️ '+str(exc));return
+        if not slots:send(chat,'⚠️ Kamida bitta vaqt yozing, masalan: 10:00, 18:00');return
+        with Session.begin() as db:
+            b=db.get(Brand,slug)
+            if b:b.reels_sync_slots=', '.join(slots)
+        rclient().delete(f'pending:{actor}')
+        reels_panel(chat,slug);return
     if state and state.startswith('tpladd:') and not raw.startswith('/'):
         add_template(actor,chat,state.split(':',1)[1],raw); return
     if state and state.startswith('setprompt:') and not raw.startswith('/'):
@@ -271,6 +282,15 @@ def admin_action(actor,chat,data):
         send(chat,'⏰ Joylash vaqtlarini yuboring (Toshkent vaqti), masalan:\n09:00, 13:00, 19:00\n\n'
                   'Shunda avtomatik joylanadigan videolar navbatdagi bo‘sh vaqtga qo‘yiladi (bir vaqtga bitta video).\n'
                   'Darhol joylash uchun: yo‘q');return
+    if data=='kb:reels':
+        with Session() as db:
+            brands=[b for b in db.scalars(select(Brand)) if db.scalars(select(Account).where(
+                Account.brand_slug==b.slug,Account.platform=='instagram',Account.status=='active')).first()]
+        if not brands:send(chat,'📺 Hali birorta brendda Instagram ulanmagan.');return
+        if len(brands)==1:reels_panel(chat,brands[0].slug);return
+        send(chat,'📺 Qaysi brend?',inline([[(b.name,'rs:panel:'+b.slug)] for b in brands]));return
+    if data.startswith('rs:'):
+        reels_action(actor,chat,data);return
     if data.startswith('admin:reels:'):
         slug=data.split(':',2)[2]
         with Session.begin() as db:
@@ -328,8 +348,7 @@ def admin_action(actor,chat,data):
             [('🧠 AI uslubi','admin:prompt:'+slug),('⚙️ Formatlar','admin:formats:'+slug)],
             [(('🤖 Avto-joylash: YOQIQ ✅' if auto else '🤖 Avto-joylash: O‘CHIQ ⬜️'),'admin:auto:'+slug)],
             [('⏰ Joylash vaqtlari','admin:slots:'+slug),('🗂 Post turlari','admin:tpl:'+slug)],
-            [(('📺 Reels→YouTube: YOQIQ ✅' if rsync else '📺 Reels→YouTube: O‘CHIQ ⬜️'),'admin:reels:'+slug),
-             ('📊 Holati','admin:reelstat:'+slug)],
+            [('📺 Reels→YouTube sozlamalari','rs:panel:'+slug)],
             [('↩️ Loyihalar','admin:brands')]])); return
     if data.startswith('admin:auto:'):
         slug=data.split(':',2)[2]
@@ -507,6 +526,96 @@ def retry_publication(actor,chat,pub_id):
         vid=v.id
     enqueue_publish(vid,f'-r{int(now_utc().timestamp())}')
     send(chat,'🔁 Qayta yuborildi. Natija hisobotda keladi.')
+
+
+REELS_PRESETS={'2':'10:00, 19:00','3':'10:00, 15:00, 20:00','4':'10:00, 14:00, 18:00, 21:00',
+               '6':'09:00, 11:00, 13:00, 15:00, 18:00, 21:00'}
+FOREVER=timedelta(days=3650)
+
+
+def reels_panel(chat,slug):
+    from .reels_sync import status_counts, next_run, is_paused, queue_preview
+    with Session() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        on=bool(b.reels_sync);paused=is_paused(b);until=aware(b.reels_sync_paused_until);slots=b.reels_sync_slots or ''
+        nxt=next_run(b);name=b.name
+    c=status_counts(slug);first=queue_preview(slug,1)
+    if not on:state='⛔ O‘chiq'
+    elif paused and until-now_utc()>timedelta(days=365):state='⏸ To‘xtatilgan (muddatsiz)'
+    elif paused:state=f'⏸ To‘xtatilgan: {tlabel(until)} gacha'
+    else:state='✅ Ishlayapti'
+    try:per_day=len(parse_slots(slots))
+    except ValueError:per_day=0
+    nline=''
+    if nxt and on and not (paused and until-now_utc()>timedelta(days=365)):
+        cap=(first[0].caption or '').split('\n')[0][:50] if first else ''
+        nline=f'\nKeyingisi: {tlabel(nxt)}'+(f' — «{cap}»' if cap else (' — navbat bo‘sh' if not first else ''))
+    text=(f'📺 YouTube ko‘chirish — {name}\n'
+          f'Instagram’ga qo‘lda qo‘yilgan Reels (Trial ham) → YouTube Shorts\n\n'
+          f'Holat: {state}\nVaqtlar: {slots or "—"} (kuniga {per_day} ta){nline}\n\n'
+          f'Bugun: {c["today"]} · Jami: {c["uploaded"]} · Navbatda: {c["queued"]} · O‘tkazilgan: {c["skipped"]}'
+          +(f' · Xato: {c["failed"]}' if c['failed'] else ''))
+    rows=[]
+    if on and not paused:rows.append([('⏸ To‘xtatib turish','rs:pausemenu:'+slug)])
+    else:rows.append([('▶️ Yoqish / davom ettirish','rs:on:'+slug)])
+    rows+=[[('⚡ Hozir 1 ta joylash','rs:now:'+slug)],
+           [('🔢 Kuniga nechta','rs:count:'+slug),('⏰ Vaqtlarni yozish','rs:slots:'+slug)],
+           [('📋 Navbat','rs:queue:'+slug),('🔄 Yangilash','rs:scan:'+slug)]]
+    if on:rows.append([('⛔ Butunlay o‘chirish','rs:off:'+slug)])
+    send(chat,text,inline(rows))
+
+
+def reels_action(actor,chat,data):
+    from .reels_sync import queue_preview, skip
+    parts=data.split(':')
+    action,slug=parts[1],parts[2] if len(parts)>2 else ''
+    if action=='panel':reels_panel(chat,slug);return
+    if action=='pausemenu':
+        send(chat,'⏸ Qancha muddatga to‘xtatamiz?',inline([
+            [('1 kun','rs:pause:'+slug+':1'),('3 kun','rs:pause:'+slug+':3'),('7 kun','rs:pause:'+slug+':7')],
+            [('Muddatsiz (o‘zim yoqaman)','rs:pause:'+slug+':0')],[('↩️ Orqaga','rs:panel:'+slug)]]));return
+    if action=='count':
+        send(chat,'🔢 Kuniga nechta video chiqsin?\n(YouTube limiti: kuniga ~6 ta, bot joylaydigan Shorts bilan birga)',inline(
+            [[(f'{n} ta: {t}',f'rs:preset:{slug}:{n}')] for n,t in REELS_PRESETS.items()]+[[('↩️ Orqaga','rs:panel:'+slug)]]));return
+    if action=='slots':
+        rclient().setex(f'pending:{actor}',600,'rsslots:'+slug)
+        send(chat,'⏰ Vaqtlarni yozing (Toshkent vaqti), masalan:\n10:00, 14:00, 18:00, 21:00\nNechta vaqt yozsangiz, kuniga shuncha video chiqadi.');return
+    if action=='queue':
+        items=queue_preview(slug,5)
+        if not items:send(chat,'📋 Navbat bo‘sh.',inline([[('🔄 Yangilash','rs:scan:'+slug),('↩️ Orqaga','rs:panel:'+slug)]]));return
+        lines=[];rows=[]
+        for i,r in enumerate(items,1):
+            when=aware(r.posted_at).astimezone(TZ).strftime('%d.%m') if r.posted_at else ''
+            cap=(r.caption or '').split('\n')[0][:45] or '(captionsiz)'
+            lines.append(f'{i}. {when} · {cap}\n   {r.permalink}')
+            rows.append([(f'⏭ {i}-ni o‘tkazib yuborish',f'rs:skip:{slug}:{r.ig_media_id}')])
+        rows.append([('↩️ Orqaga','rs:panel:'+slug)])
+        send(chat,'📋 Navbatdagi videolar (birinchi chiqadigani tepada):\n\n'+'\n'.join(lines),inline(rows));return
+    if action=='skip':
+        mid=parts[3] if len(parts)>3 else ''
+        send(chat,'⏭ O‘tkazib yuborildi.' if skip(slug,mid) else 'ℹ️ Bu video navbatda emas.')
+        reels_action(actor,chat,'rs:queue:'+slug);return
+    if action=='now':
+        media_queue().enqueue('content_manager.reels_sync.upload_next',slug,False,True,job_timeout=1800)
+        send(chat,'⚡ Navbatdagi video YouTube’ga yuborilmoqda. 1–3 daqiqada natija keladi.');return
+    if action=='scan':
+        media_queue().enqueue('content_manager.reels_sync.scan_and_report',slug,job_timeout=600)
+        send(chat,'🔄 Instagram tekshirilmoqda, natija keladi.');return
+    with Session.begin() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        if action=='on':b.reels_sync=True;b.reels_sync_paused_until=None;msg='▶️ Yoqildi.'
+        elif action=='off':b.reels_sync=False;b.reels_sync_paused_until=None;msg='⛔ O‘chirildi.'
+        elif action=='pause':
+            days=int(parts[3]) if len(parts)>3 else 0
+            b.reels_sync_paused_until=now_utc()+(timedelta(days=days) if days else FOREVER)
+            msg=f'⏸ {days} kunga to‘xtatildi, keyin o‘zi davom etadi.' if days else '⏸ To‘xtatildi. “▶️ Yoqish” bilan davom ettirasiz.'
+        elif action=='preset':
+            n=parts[3] if len(parts)>3 else '4';b.reels_sync_slots=REELS_PRESETS.get(n,REELS_PRESETS['4']);msg=f'🔢 Kuniga {n} ta.'
+        else:return
+        db.add(Audit(actor=actor,action='reels_'+action,brand_slug=slug,details=':'.join(parts[3:])))
+    send(chat,msg);reels_panel(chat,slug)
 
 
 def set_slots(actor,chat,slug,raw):

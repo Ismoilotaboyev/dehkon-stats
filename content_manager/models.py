@@ -30,6 +30,7 @@ class Brand(Base):
     # Copy Reels posted manually in the Instagram app to YouTube Shorts, one per slot.
     reels_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     reels_sync_slots: Mapped[str] = mapped_column(String(200), default='10:00, 14:00, 18:00, 21:00')
+    reels_sync_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Membership(Base):
