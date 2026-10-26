@@ -135,6 +135,10 @@ def test_panel_from_keyboard_and_pause(ui, monkeypatch):
     bot, sent, jobs, _ = ui
     bot.admin_action(1, 1, 'kb:reels')
     text, markup = sent[-1]
+    if text == '📺 Qaysi brend?':                      # several brands with Instagram: picker first
+        assert 'rs:panel:rs-brand' in _buttons(markup)
+        bot.admin_action(1, 1, 'rs:panel:rs-brand')
+        text, markup = sent[-1]
     assert text.startswith('📺 YouTube ko‘chirish — Dehqon Dorixona') and 'Holat: ✅ Ishlayapti' in text
     assert 'kuniga 2 ta' in text and 'rs:pausemenu:rs-brand' in _buttons(markup) and 'rs:now:rs-brand' in _buttons(markup)
     bot.admin_action(1, 1, 'rs:pause:rs-brand:3')
