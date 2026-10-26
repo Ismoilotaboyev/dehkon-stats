@@ -47,17 +47,48 @@ def admin_markup():
     ])
 
 
+# Persistent reply keyboard under the message box (2 columns). Button text -> action.
+ADMIN_BUTTONS={
+    '🏪 Loyihalar':'admin:brands', '⚙️ Formatlar':'kb:formats',
+    '🔗 Akkauntlar':'kb:accounts', '👥 Xodimlar':'kb:staff',
+    '📊 Hisobot':'admin:report', '➕ Brend qo‘shish':'admin:addbrand',
+}
+STAFF_BUTTONS={'🏷 Brendlarim':'brands','📖 Yordam':'help'}
+STAFF_HELP=('🎬 Videoni shu chatga yuboring (oddiy video yoki fayl, 2 GB gacha).\n'
+            'AI matn yozadi, Super Admin tasdiqlagach brend akkauntlariga joylanadi va sizga hisobot keladi.')
+
+
+def keyboard(labels):
+    rows=[[{'text':labels[i]}]+([{'text':labels[i+1]}] if i+1<len(labels) else []) for i in range(0,len(labels),2)]
+    return {'keyboard':rows,'resize_keyboard':True,'is_persistent':True}
+
+
+def admin_keyboard():return keyboard(list(ADMIN_BUTTONS))
+
+
+def staff_keyboard():return keyboard(list(STAFF_BUTTONS))
+
+
 def handle_text(msg):
     actor=msg['from']['id']; chat=msg['chat']['id']
     if msg['chat']['type']!='private': return
     raw=(msg.get('text') or '').strip()
     if not raw:return
+    if actor in superadmins() and raw in ADMIN_BUTTONS:
+        rclient().delete(f'pending:{actor}')  # a button press cancels any half-finished input
+        admin_action(actor,chat,ADMIN_BUTTONS[raw]); return
+    if actor not in superadmins() and raw in STAFF_BUTTONS:
+        with Session() as db: brands=permitted_brands(db,actor)
+        if not brands: send(chat,'⛔ Ruxsat yo‘q. /start orqali murojaat qiling.'); return
+        if STAFF_BUTTONS[raw]=='brands': send(chat,'🏷 Sizga ruxsat berilgan brendlar:\n'+'\n'.join('• '+b.name for b in brands))
+        else: send(chat,STAFF_HELP)
+        return
     if raw.startswith('/start') or raw.startswith('/menu'):
         if actor in superadmins():
-            send(chat,'👑 Content Manager AI — Super Admin. Boshlang‘ich brend: Dehqon Dorixona.',admin_markup())
+            send(chat,'👑 Content Manager AI — Super Admin. Pastdagi menyudan tanlang.',admin_keyboard())
         else:
             with Session() as db: brands=permitted_brands(db,actor)
-            if brands: send(chat,'✅ Sizga ruxsat berilgan brendlar: '+', '.join(b.name for b in brands)+'. Video yuboring.')
+            if brands: send(chat,'✅ Sizga ruxsat berilgan brendlar: '+', '.join(b.name for b in brands)+'. Video yuboring.',staff_keyboard())
             else:
                 send(chat,f'⛔ Sizga ruxsat berilmagan. Admin uchun Telegram ID: {actor}')
                 notify_admins(f'🔔 Content Manager AI: yangi foydalanuvchi ruxsat so‘rayapti. ID: {actor}. /grant {actor} dehkon-dorixona')
@@ -167,6 +198,31 @@ def handle_callback(callback):
         enqueue_video(video_id)
         send(chat,'✅ Video '+slug+' uchun qabul qilindi. AI tahlildan so‘ng Super Admin tasdiqlagach nashr qilinadi.');return
     if actor not in superadmins(): send(chat,'⛔ Faqat Super Admin.');return
+    admin_action(actor,chat,data)
+
+
+def admin_action(actor,chat,data):
+    """Super Admin actions shared by inline buttons and the reply keyboard (caller checks the role)."""
+    if data=='kb:formats':
+        with Session() as db: brands=db.scalars(select(Brand)).all()
+        if len(brands)==1: send_formats(chat,brands[0].slug); return
+        send(chat,'⚙️ Qaysi brend formatlari?',inline([[(b.name,'admin:formats:'+b.slug)] for b in brands])); return
+    if data=='kb:accounts':
+        with Session() as db:
+            brands=db.scalars(select(Brand)).all()
+            lines=[]
+            for b in brands:
+                acc=db.scalars(select(Account).where(Account.brand_slug==b.slug)).all()
+                lines.append(f'🏪 {b.name} ({b.slug})\n'+('\n'.join(f'  • {a.platform}: {a.handle} ({a.status})' for a in acc) or '  Hozircha akkaunt yo‘q'))
+            pending=db.scalars(select(Account).where(Account.brand_slug.is_(None))).all()
+        if pending: lines.append('⏳ Biriktirilmagan:\n'+'\n'.join(f'  • {a.platform}: {a.handle} — /bindbiz {a.id} brand-slug' for a in pending))
+        send(chat,'🔗 Akkauntlar\n\n'+'\n\n'.join(lines),inline([[(f'➕ {b.name}: ulash','admin:brand:'+b.slug)] for b in brands])); return
+    if data=='kb:staff':
+        with Session() as db:
+            rows=db.scalars(select(Membership).order_by(Membership.brand_slug)).all()
+            staff=[(m.brand_slug,m.telegram_id) for m in rows if m.can_publish]
+        body='\n'.join(f'• {slug}: {uid}' for slug,uid in staff) or 'Hozircha xodim yo‘q.'
+        send(chat,f'👥 Xodimlar:\n{body}\n\nRuxsat berish: /grant USER_ID dehkon-dorixona\nBekor qilish: /revoke USER_ID dehkon-dorixona\nXodim ID sini bilmasa, botga /start yozsin — ID sizga keladi.'); return
     if data.startswith('appr:'):
         parts=data.split(':',2)
         if len(parts)==3: handle_approval(actor,chat,parts[1],parts[2])
@@ -222,7 +278,7 @@ def handle_callback(callback):
             b.defaults=values
             db.add(Audit(actor=actor,action='format_toggle',brand_slug=slug,details=surface))
         send_formats(chat,slug);return
-    if data=='admin:staff':send(chat,'👥 Xodimga ruxsat: /grant 123456789 dehkon-dorixona\nBekor qilish: /revoke 123456789 dehkon-dorixona');return
+    if data=='admin:staff':admin_action(actor,chat,'kb:staff');return
     if data=='admin:report':
         from .models import Publication
         with Session() as db:

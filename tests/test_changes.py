@@ -320,3 +320,40 @@ def test_menu_commands_per_role(monkeypatch):
     admin_scopes = {s['chat_id'] for s, c in cmds[1:] if 'menu' in c and 'grant' in c}
     assert admin_scopes == {1, 2}
     assert calls[-1][0] == 'setChatMenuButton'
+
+
+# ---------- reply keyboard ----------
+
+def test_start_shows_keyboard_by_role(botmocks):
+    sent, _, _ = botmocks
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '/start'})
+    kb = sent[-1][2]
+    assert kb['is_persistent'] and kb['resize_keyboard']
+    assert [b['text'] for b in kb['keyboard'][0]] == ['🏪 Loyihalar', '⚙️ Formatlar']
+    assert all(len(row) <= 2 for row in kb['keyboard'])
+    with Session.begin() as db:
+        if not db.get(Brand, 'kb-brand'):
+            db.add(Brand(slug='kb-brand', name='KB Brand', defaults=[]))
+        db.add(Membership(telegram_id=4242, brand_slug='kb-brand'))
+    bot.handle_text({'from': {'id': 4242}, 'chat': {'id': 4242, 'type': 'private'}, 'text': '/start'})
+    assert [b['text'] for b in sent[-1][2]['keyboard'][0]] == ['🏷 Brendlarim', '📖 Yordam']
+    bot.handle_text({'from': {'id': 4242}, 'chat': {'id': 4242, 'type': 'private'}, 'text': '🏷 Brendlarim'})
+    assert 'KB Brand' in sent[-1][1]
+
+
+def test_admin_buttons_work_and_cancel_pending(botmocks):
+    sent, _, r = botmocks
+    r.setex('pending:1', 600, 'addbrand')
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '🔗 Akkauntlar'})
+    assert r.get('pending:1') is None          # button text was not taken as a brand name
+    assert sent[-1][1].startswith('🔗 Akkauntlar')
+    with Session() as db:
+        assert db.get(Brand, 'akkauntlar') is None
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '👥 Xodimlar'})
+    assert '4242' in sent[-1][1] or 'Xodimlar' in sent[-1][1]
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '⚙️ Formatlar'})
+    assert sent[-1][2]['inline_keyboard']  # brand picker or format toggles
+    # non-admin cannot use admin buttons
+    n = len(sent)
+    bot.handle_text({'from': {'id': 4242}, 'chat': {'id': 4242, 'type': 'private'}, 'text': '📊 Hisobot'})
+    assert '📊' not in sent[-1][1] and len(sent) == n + 1
