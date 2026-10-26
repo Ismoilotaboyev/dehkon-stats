@@ -19,8 +19,8 @@ async def lifespan(app:FastAPI):
     migrate()  # alembic upgrade head; fails the deploy instead of running on an outdated schema
     init_db()
     import threading
-    from .setup_webhook import ensure_webhook
-    threading.Thread(target=ensure_webhook, daemon=True, name='webhook-setup').start()
+    from .setup_webhook import ensure_bot_setup
+    threading.Thread(target=ensure_bot_setup, daemon=True, name='bot-setup').start()
     yield
 
 

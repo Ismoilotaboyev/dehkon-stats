@@ -10,10 +10,11 @@ Manual run (Railway shell of content-api):
 After logOut the bot cannot return to the cloud server for 10 minutes.
 """
 import sys
+import json
 import time
 import logging
 import requests
-from .config import env, base_url, telegram_api_base, local_bot_api
+from .config import env, base_url, telegram_api_base, local_bot_api, superadmins
 from .telegram_api import telegram
 
 log = logging.getLogger('content_manager')
@@ -34,6 +35,55 @@ def set_webhook():
         'secret_token': env('TELEGRAM_WEBHOOK_SECRET'),
         'allowed_updates': '["message","callback_query","business_connection"]',
         'drop_pending_updates': 'false'})
+
+
+# Left-bottom "Menu" button in Telegram (setMyCommands). Staff see only what they need;
+# Super Admins get the full management list in their own chats.
+STAFF_COMMANDS = [
+    ('start', 'Boshlash va ruxsat berilgan brendlar'),
+    ('help', 'Qanday ishlaydi: video yuborish'),
+]
+ADMIN_COMMANDS = [
+    ('menu', '👑 Super Admin panel'),
+    ('brands', '🏪 Brendlar ro‘yxati'),
+    ('accounts', '🔗 Ulangan akkauntlar: /accounts brand-slug'),
+    ('newbrand', '➕ Yangi brend: /newbrand slug Nomi'),
+    ('grant', '👥 Xodimga ruxsat: /grant USER_ID brand-slug'),
+    ('revoke', '⛔ Ruxsatni olish: /revoke USER_ID brand-slug'),
+    ('connectig', '📸 Instagram ulash: /connectig brand-slug'),
+    ('connectyoutube', '▶️ YouTube ulash: /connectyoutube brand-slug'),
+    ('setdefaults', '⚙️ Formatlar: /setdefaults brand-slug f1,f2'),
+    ('bindbiz', '💼 Telegram Business ulash: /bindbiz ID brand-slug'),
+    ('help', '📖 Barcha buyruqlar'),
+]
+
+
+def _commands(items):
+    return json.dumps([{'command': c, 'description': d} for c, d in items], ensure_ascii=False)
+
+
+def set_commands():
+    telegram('setMyCommands', {'commands': _commands(STAFF_COMMANDS),
+                               'scope': json.dumps({'type': 'default'})})
+    for admin in superadmins():
+        telegram('setMyCommands', {'commands': _commands(ADMIN_COMMANDS),
+                                   'scope': json.dumps({'type': 'chat', 'chat_id': admin})})
+    telegram('setChatMenuButton', {'menu_button': json.dumps({'type': 'commands'})})
+
+
+def ensure_bot_setup():
+    """Background task on API start: webhook first, then the Menu button commands."""
+    ensure_webhook()
+    if not env('TELEGRAM_BOT_TOKEN'):
+        return
+    for i in range(5):
+        try:
+            set_commands()
+            log.info('Telegram menu commands set (%s admins)', len(superadmins()))
+            return
+        except Exception as exc:
+            log.warning('Menu commands attempt %s failed: %s', i + 1, str(exc)[:200])
+            time.sleep(10)
 
 
 def ensure_webhook(attempts=30, delay=20):

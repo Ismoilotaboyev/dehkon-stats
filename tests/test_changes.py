@@ -304,3 +304,19 @@ def test_trial_reel_request_uses_meta_values(monkeypatch):
     monkeypatch.setenv('IG_TRIAL_GRADUATION', 'auto')
     with pytest.raises(ValueError):
         publishers.ig_publish(acc, 'instagram_trial', 'k.mp4', 'cap')
+
+
+# ---------- Menu button commands ----------
+
+def test_menu_commands_per_role(monkeypatch):
+    import json as _json
+    from content_manager import setup_webhook as sw
+    monkeypatch.setenv('SUPERADMIN_TELEGRAM_IDS', '1,2')
+    calls = []
+    monkeypatch.setattr(sw, 'telegram', lambda method, payload=None, **k: calls.append((method, payload)))
+    sw.set_commands()
+    cmds = [(_json.loads(p['scope']), [c['command'] for c in _json.loads(p['commands'])]) for m, p in calls if m == 'setMyCommands']
+    assert cmds[0] == ({'type': 'default'}, ['start', 'help'])
+    admin_scopes = {s['chat_id'] for s, c in cmds[1:] if 'menu' in c and 'grant' in c}
+    assert admin_scopes == {1, 2}
+    assert calls[-1][0] == 'setChatMenuButton'
