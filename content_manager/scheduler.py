@@ -13,7 +13,8 @@ import time
 from datetime import timedelta
 from sqlalchemy import select
 from .config import env
-from .models import Session, Video, Publication
+from .models import Session, Video, Publication, Brand
+from .timeutil import parse_slots
 from .timeutil import now_utc, aware, TZ
 
 log = logging.getLogger('content_manager')
@@ -87,10 +88,33 @@ def queue_periodic(now):
     return done
 
 
+def queue_reels_sync(now, window=timedelta(minutes=20)):
+    """At each Reels→YouTube slot (Tashkent time) queue one upload per brand, once."""
+    local = now.astimezone(TZ)
+    with Session() as db:
+        brands = [(b.slug, b.reels_sync_slots) for b in db.scalars(select(Brand).where(Brand.reels_sync == True))]
+    queued = []
+    r = None
+    for slug, raw in brands:
+        try:
+            slots = parse_slots(raw or '')
+        except ValueError:
+            continue
+        for slot in slots:
+            h, m = map(int, slot.split(':'))
+            start = local.replace(hour=h, minute=m, second=0, microsecond=0)
+            if start <= local < start + window:
+                r = r or _redis()
+                if r.set(f'reelsync:{slug}:{local.date()}:{slot}', '1', ex=2 * 86400, nx=True):
+                    _queue().enqueue('content_manager.reels_sync.upload_next', slug, slot == slots[-1], job_timeout=1800)
+                    queued.append((slug, slot))
+    return queued
+
+
 def tick(now=None):
     now = now or now_utc()
     return {'scheduled': release_scheduled(now), 'untyped': continue_untyped(now),
-            'metrics': queue_metric_checks(now), 'periodic': queue_periodic(now)}
+            'metrics': queue_metric_checks(now), 'periodic': queue_periodic(now), 'reels': queue_reels_sync(now)}
 
 
 def run_forever(interval=60):

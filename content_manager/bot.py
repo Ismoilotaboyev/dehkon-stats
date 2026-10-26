@@ -271,6 +271,19 @@ def admin_action(actor,chat,data):
         send(chat,'⏰ Joylash vaqtlarini yuboring (Toshkent vaqti), masalan:\n09:00, 13:00, 19:00\n\n'
                   'Shunda avtomatik joylanadigan videolar navbatdagi bo‘sh vaqtga qo‘yiladi (bir vaqtga bitta video).\n'
                   'Darhol joylash uchun: yo‘q');return
+    if data.startswith('admin:reels:'):
+        slug=data.split(':',2)[2]
+        with Session.begin() as db:
+            b=db.get(Brand,slug)
+            if not b:send(chat,'Brend topilmadi');return
+            b.reels_sync=not b.reels_sync;on=b.reels_sync;rs=b.reels_sync_slots
+            db.add(Audit(actor=actor,action='reels_sync_on' if on else 'reels_sync_off',brand_slug=slug))
+        send(chat,(f'📺 Yoqildi: Instagram’ga qo‘lda qo‘yilgan Reels’lar (Trial ham) har kuni {rs} da bittadan '
+                   'YouTube Shorts’ga joylanadi, eng yangisidan boshlab.') if on else '📺 Reels→YouTube o‘chirildi.')
+        admin_action(actor,chat,'admin:brand:'+slug);return
+    if data.startswith('admin:reelstat:'):
+        from .reels_sync import status_text
+        send(chat,status_text(data.split(':',2)[2]));return
     if data.startswith('admin:tpl:'):
         show_templates(chat,data.split(':',2)[2]);return
     if data.startswith('admin:tpladd:'):
@@ -305,14 +318,18 @@ def admin_action(actor,chat,data):
             summary='\n'.join(f'• {a.platform}: {a.handle} ({a.status})' for a in acc) or 'Hozircha akkaunt yo‘q'
             formats=', '.join(b.defaults or []) or 'Belgilanmagan'
             auto=bool(b.auto_publish);slots=b.publish_slots or '';ntpl=len(b.templates or [])
+            rsync=bool(b.reels_sync);rslots=b.reels_sync_slots or ''
         mode=('🤖 Avtomatik: AI shubha qilmagan videolar tasdiqsiz joylanadi' if auto
               else '🕵️ Har bir video Super Admin tasdig‘idan o‘tadi')
         send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}\n\nJoylash: {mode}\n'
-                  f'Vaqtlar: {slots or "darhol"} · Post turlari: {ntpl} ta',inline([
+                  f'Vaqtlar: {slots or "darhol"} · Post turlari: {ntpl} ta\n'
+                  f'📺 Reels→YouTube: {"yoqiq, " + rslots if rsync else "o‘chiq"}',inline([
             [('📸 Instagram ulash','admin:ig:'+slug),('▶️ YouTube ulash','admin:yt:'+slug)],
             [('🧠 AI uslubi','admin:prompt:'+slug),('⚙️ Formatlar','admin:formats:'+slug)],
             [(('🤖 Avto-joylash: YOQIQ ✅' if auto else '🤖 Avto-joylash: O‘CHIQ ⬜️'),'admin:auto:'+slug)],
             [('⏰ Joylash vaqtlari','admin:slots:'+slug),('🗂 Post turlari','admin:tpl:'+slug)],
+            [(('📺 Reels→YouTube: YOQIQ ✅' if rsync else '📺 Reels→YouTube: O‘CHIQ ⬜️'),'admin:reels:'+slug),
+             ('📊 Holati','admin:reelstat:'+slug)],
             [('↩️ Loyihalar','admin:brands')]])); return
     if data.startswith('admin:auto:'):
         slug=data.split(':',2)[2]

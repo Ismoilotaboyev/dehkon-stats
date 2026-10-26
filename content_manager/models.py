@@ -27,6 +27,9 @@ class Brand(Base):
     publish_slots: Mapped[str] = mapped_column(String(200), default='')
     # Post types staff pick when sending: [{"key": "aksiya", "name": "Aksiya", "prompt": "..."}]
     templates: Mapped[list] = mapped_column(JSON, default=list)
+    # Copy Reels posted manually in the Instagram app to YouTube Shorts, one per slot.
+    reels_sync: Mapped[bool] = mapped_column(Boolean, default=False)
+    reels_sync_slots: Mapped[str] = mapped_column(String(200), default='10:00, 14:00, 18:00, 21:00')
 
 
 class Membership(Base):
@@ -103,6 +106,22 @@ class Publication(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     checks_done: Mapped[int] = mapped_column(Integer, default=0)   # 0 -> 24 h insight check -> 1 -> 72 h -> 2
     __table_args__ = (UniqueConstraint('video_id','account_id','surface','part'),)
+
+
+class IgSync(Base):
+    """One Instagram Reel found on the account and its YouTube copy status."""
+    __tablename__ = 'ig_sync'
+    ig_media_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    brand_slug: Mapped[str] = mapped_column(String(120))
+    permalink: Mapped[str] = mapped_column(Text, default='')
+    caption: Mapped[str] = mapped_column(Text, default='')
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    shared_to_feed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default='queued')   # queued / uploaded / skipped / failed
+    youtube_id: Mapped[str] = mapped_column(String(64), default='')
+    details: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PostMetric(Base):

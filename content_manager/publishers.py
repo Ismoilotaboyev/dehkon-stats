@@ -137,6 +137,39 @@ def ig_list_media(account:Account,limit=50):
     raise last
 
 
+def ig_all_media(account:Account,max_pages=20,page_size=50):
+    """Every media item of the account (newest first), following API paging."""
+    token=ig_token(account)
+    url=f'{ig_host()}/me/media';params={'fields':IG_LIST_FIELDS,'limit':page_size,'access_token':token}
+    out=[]
+    for _ in range(max_pages):
+        try:d=api_json(requests.get(url,params=params,timeout=30))
+        except RuntimeError:
+            if params and 'is_shared_to_feed' in params.get('fields',''):
+                params['fields']=IG_LIST_FIELDS.replace(',is_shared_to_feed','');continue
+            raise
+        out+=d.get('data',[])
+        nxt=(d.get('paging') or {}).get('next')
+        if not nxt:break
+        url,params=nxt,None
+    return out
+
+
+def ig_media_url(account:Account,media_id:str):
+    """Temporary download URL of an own video ('' when Instagram withholds it, e.g. copyrighted music)."""
+    d=api_json(requests.get(f'{ig_host()}/{media_id}',params={'fields':'media_url,media_type','access_token':ig_token(account)},timeout=30))
+    return d.get('media_url','')
+
+
+def download_url(url,dest):
+    with requests.get(url,stream=True,timeout=(30,600)) as r:
+        r.raise_for_status()
+        with open(dest,'wb') as f:
+            for chunk in r.iter_content(1024*1024):
+                if chunk:f.write(chunk)
+    return dest
+
+
 def ig_health(account:Account):
     """Raises if the Instagram token no longer works."""
     token=ig_token(account)
