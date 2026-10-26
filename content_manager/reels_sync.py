@@ -43,6 +43,8 @@ def scan(slug):
         bot_ids = {p.external_post_id for p in db.scalars(select(Publication).where(Publication.surface.in_(BOT_IG_SURFACES)))
                    if p.external_post_id}
         known = {r.ig_media_id for r in db.scalars(select(IgSync).where(IgSync.brand_slug == slug))}
+        from .trial_repost import created_trial_ids
+        bot_ids |= created_trial_ids(db)   # Trial copies made by the Reels→Trial feature
     if not ig:
         return 0
     added = 0

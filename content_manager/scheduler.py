@@ -121,10 +121,35 @@ def queue_reels_sync(now, window=timedelta(minutes=20)):
     return queued
 
 
+def queue_trial_repost(now, window=timedelta(minutes=20)):
+    """At each Reels→Trial slot (Tashkent time) queue one re-post per brand, once."""
+    local = now.astimezone(TZ)
+    with Session() as db:
+        brands = [(b.slug, b.trial_repost_slots) for b in db.scalars(select(Brand).where(Brand.trial_repost == True))
+                  if not (b.trial_repost_paused_until and aware(b.trial_repost_paused_until) > now)]
+    queued = []
+    r = None
+    for slug, raw in brands:
+        try:
+            slots = parse_slots(raw or '')
+        except ValueError:
+            continue
+        for slot in slots:
+            h, m = map(int, slot.split(':'))
+            start = local.replace(hour=h, minute=m, second=0, microsecond=0)
+            if start <= local < start + window:
+                r = r or _redis()
+                if r.set(f'trialrepost:{slug}:{local.date()}:{slot}', '1', ex=2 * 86400, nx=True):
+                    _queue().enqueue('content_manager.trial_repost.upload_next', slug, slot == slots[-1], job_timeout=1800)
+                    queued.append((slug, slot))
+    return queued
+
+
 def tick(now=None):
     now = now or now_utc()
     return {'scheduled': release_scheduled(now), 'untyped': continue_untyped(now),
-            'metrics': queue_metric_checks(now), 'periodic': queue_periodic(now), 'reels': queue_reels_sync(now)}
+            'metrics': queue_metric_checks(now), 'periodic': queue_periodic(now), 'reels': queue_reels_sync(now),
+            'trial': queue_trial_repost(now)}
 
 
 def run_forever(interval=60):

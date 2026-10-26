@@ -54,7 +54,7 @@ ADMIN_BUTTONS={
     '🏪 Loyihalar':'admin:brands', '⚙️ Formatlar':'kb:formats',
     '🔗 Akkauntlar':'kb:accounts', '👥 Xodimlar':'kb:staff',
     '📊 Hisobot':'admin:report', '➕ Brend qo‘shish':'admin:addbrand',
-    '📺 YouTube ko‘chirish':'kb:reels',
+    '📺 YouTube ko‘chirish':'kb:reels', '🧪 Trial ko‘chirish':'kb:trial',
 }
 STAFF_BUTTONS={'🏷 Brendlarim':'brands','📖 Yordam':'help'}
 STAFF_HELP=('🎬 Videoni shu chatga yuboring (oddiy video yoki fayl, 2 GB gacha).\n'
@@ -119,6 +119,16 @@ def handle_text(msg):
             if b:b.reels_sync_slots=', '.join(slots)
         rclient().delete(f'pending:{actor}')
         reels_panel(chat,slug);return
+    if state and state.startswith('trslots:') and not raw.startswith('/'):
+        slug=state.split(':',1)[1]
+        try:slots=parse_slots(raw)
+        except ValueError as exc:send(chat,'⚠️ '+str(exc));return
+        if not slots:send(chat,'⚠️ Kamida bitta vaqt yozing, masalan: 09:00, 15:00, 21:00');return
+        with Session.begin() as db:
+            b=db.get(Brand,slug)
+            if b:b.trial_repost_slots=', '.join(slots)
+        rclient().delete(f'pending:{actor}')
+        trial_panel(chat,slug);return
     if state and state.startswith('tpladd:') and not raw.startswith('/'):
         add_template(actor,chat,state.split(':',1)[1],raw); return
     if state and state.startswith('setprompt:') and not raw.startswith('/'):
@@ -290,6 +300,15 @@ def admin_action(actor,chat,data):
         send(chat,'📺 Qaysi brend?',inline([[(b.name,'rs:panel:'+b.slug)] for b in brands]));return
     if data.startswith('rs:'):
         reels_action(actor,chat,data);return
+    if data=='kb:trial':
+        with Session() as db:
+            brands=[b for b in db.scalars(select(Brand)) if db.scalars(select(Account).where(
+                Account.brand_slug==b.slug,Account.platform=='instagram',Account.status=='active')).first()]
+        if not brands:send(chat,'🧪 Hali birorta brendda Instagram ulanmagan.');return
+        if len(brands)==1:trial_panel(chat,brands[0].slug);return
+        send(chat,'🧪 Qaysi akkauntning Reels’larini Trial qilamiz?',inline([[(b.name,'tr:panel:'+b.slug)] for b in brands]));return
+    if data.startswith('tr:'):
+        trial_action(actor,chat,data);return
     if data.startswith('admin:reels:'):
         slug=data.split(':',2)[2]
         with Session.begin() as db:
@@ -338,16 +357,19 @@ def admin_action(actor,chat,data):
             formats=', '.join(b.defaults or []) or 'Belgilanmagan'
             auto=bool(b.auto_publish);slots=b.publish_slots or '';ntpl=len(b.templates or [])
             rsync=bool(b.reels_sync);rslots=b.reels_sync_slots or ''
+            trs=bool(b.trial_repost);trslots=b.trial_repost_slots or ''
         mode=('🤖 Avtomatik: AI shubha qilmagan videolar tasdiqsiz joylanadi' if auto
               else '🕵️ Har bir video Super Admin tasdig‘idan o‘tadi')
         send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}\n\nJoylash: {mode}\n'
                   f'Vaqtlar: {slots or "darhol"} · Post turlari: {ntpl} ta\n'
-                  f'📺 Reels→YouTube: {"yoqiq, " + rslots if rsync else "o‘chiq"}',inline([
+                  f'📺 Reels→YouTube: {"yoqiq, " + rslots if rsync else "o‘chiq"}\n'
+                  f'🧪 Reels→Trial: {"yoqiq, " + trslots if trs else "o‘chiq"}',inline([
             [('📸 Instagram ulash','admin:ig:'+slug),('▶️ YouTube ulash','admin:yt:'+slug)],
             [('🧠 AI uslubi','admin:prompt:'+slug),('⚙️ Formatlar','admin:formats:'+slug)],
             [(('🤖 Avto-joylash: YOQIQ ✅' if auto else '🤖 Avto-joylash: O‘CHIQ ⬜️'),'admin:auto:'+slug)],
             [('⏰ Joylash vaqtlari','admin:slots:'+slug),('🗂 Post turlari','admin:tpl:'+slug)],
             [('📺 Reels→YouTube sozlamalari','rs:panel:'+slug)],
+            [('🧪 Reels→Trial sozlamalari','tr:panel:'+slug)],
             [('↩️ Loyihalar','admin:brands')]])); return
     if data.startswith('admin:auto:'):
         slug=data.split(':',2)[2]
@@ -693,6 +715,96 @@ def reels_action(actor,chat,data):
         else:return
         db.add(Audit(actor=actor,action='reels_'+action,brand_slug=slug,details=':'.join(parts[3:])))
     send(chat,msg);reels_panel(chat,slug)
+
+
+TRIAL_PRESETS={'3':'10:00, 15:00, 20:00','4':'10:00, 14:00, 18:00, 21:00',
+               '5':'09:00, 12:00, 15:00, 18:00, 21:00','6':'09:00, 11:00, 13:00, 15:00, 18:00, 21:00'}
+
+
+def trial_panel(chat,slug):
+    from .trial_repost import status_counts, next_run, is_paused, queue_preview
+    with Session() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        on=bool(b.trial_repost);paused=is_paused(b);until=aware(b.trial_repost_paused_until);slots=b.trial_repost_slots or ''
+        nxt=next_run(b);name=b.name
+    c=status_counts(slug);first=queue_preview(slug,1)
+    forever=paused and until-now_utc()>timedelta(days=365)
+    if not on:state='⛔ O‘chiq'
+    elif forever:state='⏸ To‘xtatilgan (muddatsiz)'
+    elif paused:state=f'⏸ To‘xtatilgan: {tlabel(until)} gacha'
+    else:state='✅ Ishlayapti'
+    try:per_day=len(parse_slots(slots))
+    except ValueError:per_day=0
+    nline=''
+    if nxt and on and not forever:
+        cap=(first[0].caption or '').split('\n')[0][:50] if first else ''
+        nline=f'\nKeyingisi: {tlabel(nxt)}'+(f' — «{cap}»' if cap else (' — navbat bo‘sh' if not first else ''))
+    text=(f'🧪 Trial ko‘chirish — {name}\n'
+          f'Akkauntdagi oddiy Reels’lar → o‘sha akkauntga Trial Reels (faqat obunachi bo‘lmaganlarga ko‘rinadi)\n\n'
+          f'Holat: {state}\nVaqtlar: {slots or "—"} (kuniga {per_day} ta){nline}\n\n'
+          f'Bugun: {c["today"]} · Jami: {c["uploaded"]} · Navbatda: {c["queued"]} · O‘tkazilgan: {c["skipped"]}'
+          +(f' · Xato: {c["failed"]}' if c['failed'] else ''))
+    rows=[]
+    if on and not paused:rows.append([('⏸ To‘xtatib turish','tr:pausemenu:'+slug)])
+    else:rows.append([('▶️ Yoqish / davom ettirish','tr:on:'+slug)])
+    rows+=[[('⚡ Hozir 1 ta joylash','tr:now:'+slug)],
+           [('🔢 Kuniga nechta','tr:count:'+slug),('⏰ Vaqtlarni yozish','tr:slots:'+slug)],
+           [('📋 Navbat','tr:queue:'+slug),('🔄 Yangilash','tr:scan:'+slug)]]
+    if on:rows.append([('⛔ Butunlay o‘chirish','tr:off:'+slug)])
+    send(chat,text,inline(rows))
+
+
+def trial_action(actor,chat,data):
+    from .trial_repost import queue_preview, skip
+    parts=data.split(':')
+    action,slug=parts[1],parts[2] if len(parts)>2 else ''
+    if action=='panel':trial_panel(chat,slug);return
+    if action=='pausemenu':
+        send(chat,'⏸ Qancha muddatga to‘xtatamiz?',inline([
+            [('1 kun','tr:pause:'+slug+':1'),('3 kun','tr:pause:'+slug+':3'),('7 kun','tr:pause:'+slug+':7')],
+            [('Muddatsiz (o‘zim yoqaman)','tr:pause:'+slug+':0')],[('↩️ Orqaga','tr:panel:'+slug)]]));return
+    if action=='count':
+        send(chat,'🔢 Kuniga nechta Trial chiqsin?',inline(
+            [[(f'{n} ta: {t}',f'tr:preset:{slug}:{n}')] for n,t in TRIAL_PRESETS.items()]+[[('↩️ Orqaga','tr:panel:'+slug)]]));return
+    if action=='slots':
+        rclient().setex(f'pending:{actor}',600,'trslots:'+slug)
+        send(chat,'⏰ Vaqtlarni yozing (Toshkent vaqti), masalan:\n09:00, 12:00, 15:00, 18:00, 21:00\nNechta vaqt yozsangiz, kuniga shuncha Trial chiqadi.');return
+    if action=='queue':
+        items=queue_preview(slug,5)
+        if not items:send(chat,'📋 Navbat bo‘sh.',inline([[('🔄 Yangilash','tr:scan:'+slug),('↩️ Orqaga','tr:panel:'+slug)]]));return
+        lines=[];rows=[]
+        for i,r in enumerate(items,1):
+            when=aware(r.posted_at).astimezone(TZ).strftime('%d.%m') if r.posted_at else ''
+            cap=(r.caption or '').split('\n')[0][:45] or '(captionsiz)'
+            lines.append(f'{i}. {when} · {cap}\n   {r.permalink}')
+            rows.append([(f'⏭ {i}-ni o‘tkazib yuborish',f'tr:skip:{slug}:{r.ig_media_id}')])
+        rows.append([('↩️ Orqaga','tr:panel:'+slug)])
+        send(chat,'📋 Navbatdagi videolar (birinchi chiqadigani tepada):\n\n'+'\n'.join(lines),inline(rows));return
+    if action=='skip':
+        mid=parts[3] if len(parts)>3 else ''
+        send(chat,'⏭ O‘tkazib yuborildi.' if skip(slug,mid) else 'ℹ️ Bu video navbatda emas.')
+        trial_action(actor,chat,'tr:queue:'+slug);return
+    if action=='now':
+        media_queue().enqueue('content_manager.trial_repost.upload_next',slug,False,True,job_timeout=1800)
+        send(chat,'⚡ Navbatdagi video Trial sifatida joylanmoqda. 1–3 daqiqada natija keladi.');return
+    if action=='scan':
+        media_queue().enqueue('content_manager.trial_repost.scan_and_report',slug,job_timeout=600)
+        send(chat,'🔄 Instagram tekshirilmoqda, natija keladi.');return
+    with Session.begin() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        if action=='on':b.trial_repost=True;b.trial_repost_paused_until=None;msg='▶️ Yoqildi.'
+        elif action=='off':b.trial_repost=False;b.trial_repost_paused_until=None;msg='⛔ O‘chirildi.'
+        elif action=='pause':
+            days=int(parts[3]) if len(parts)>3 else 0
+            b.trial_repost_paused_until=now_utc()+(timedelta(days=days) if days else FOREVER)
+            msg=f'⏸ {days} kunga to‘xtatildi, keyin o‘zi davom etadi.' if days else '⏸ To‘xtatildi. “▶️ Yoqish” bilan davom ettirasiz.'
+        elif action=='preset':
+            n=parts[3] if len(parts)>3 else '6';b.trial_repost_slots=TRIAL_PRESETS.get(n,TRIAL_PRESETS['6']);msg=f'🔢 Kuniga {n} ta.'
+        else:return
+        db.add(Audit(actor=actor,action='trial_'+action,brand_slug=slug,details=':'.join(parts[3:])))
+    send(chat,msg);trial_panel(chat,slug)
 
 
 def set_slots(actor,chat,slug,raw):

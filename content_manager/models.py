@@ -31,6 +31,10 @@ class Brand(Base):
     reels_sync: Mapped[bool] = mapped_column(Boolean, default=False)
     reels_sync_slots: Mapped[str] = mapped_column(String(200), default='10:00, 14:00, 18:00, 21:00')
     reels_sync_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Re-post the account's own Reels to the same account as Trial Reels, one per slot.
+    trial_repost: Mapped[bool] = mapped_column(Boolean, default=False)
+    trial_repost_slots: Mapped[str] = mapped_column(String(200), default='09:00, 11:00, 13:00, 15:00, 18:00, 21:00')
+    trial_repost_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Membership(Base):
@@ -122,6 +126,22 @@ class IgSync(Base):
     shared_to_feed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default='queued')   # queued / uploaded / skipped / failed
     youtube_id: Mapped[str] = mapped_column(String(64), default='')
+    details: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TrialRepost(Base):
+    """One own Reel queued to be re-posted on the same account as a Trial Reel."""
+    __tablename__ = 'trial_repost'
+    ig_media_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    brand_slug: Mapped[str] = mapped_column(String(120))
+    permalink: Mapped[str] = mapped_column(Text, default='')
+    caption: Mapped[str] = mapped_column(Text, default='')
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    shared_to_feed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default='queued')   # queued / uploaded / skipped / failed
+    youtube_id: Mapped[str] = mapped_column(String(64), default='')    # here: id of the new Trial Reel
     details: Mapped[str] = mapped_column(Text, default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
