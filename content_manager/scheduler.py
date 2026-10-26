@@ -48,13 +48,22 @@ def release_scheduled(now):
 def continue_untyped(now):
     from .bot import enqueue_video
     with Session.begin() as db:
-        late = [v for v in db.scalars(select(Video).where(Video.status == 'awaiting_type'))
+        late = [v for v in db.scalars(select(Video).where(Video.status.in_(('awaiting_type', 'choosing'))))
                 if aware(v.created_at) and aware(v.created_at) <= now - TYPE_TIMEOUT]
+        notify = []
         for v in late:
-            v.status = 'queued'
-        ids = [v.id for v in late]
+            if v.status == 'choosing' and not v.targets and v.targets is not None:
+                v.status = 'rejected'; v.error = 'Hech qaysi joy tanlanmadi'; continue
+            v.status = 'queued'; notify.append(v.sender_id)
+        ids = [v.id for v in late if v.status == 'queued']
     for vid in ids:
         enqueue_video(vid)
+    for uid in notify:
+        try:
+            from .telegram_api import send
+            send(uid, '⏱ 10 daqiqa ichida «Yuborish» bosilmadi — belgilangan joylarga avtomatik yuborildi.')
+        except Exception:
+            pass
     return ids
 
 

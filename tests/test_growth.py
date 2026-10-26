@@ -97,28 +97,80 @@ def test_join_request_buttons_and_grant(env):
 
 # ---------- 6. post types ----------
 
-def test_post_type_picker_and_timeout(env):
-    brand('type-brand', templates=[{'key': 'aksiya', 'name': '🏷 Aksiya', 'prompt': 'aksiya'}])
+def _press(uid, data, mid=500):
+    bot.handle_callback({'id': 'q', 'from': {'id': uid}, 'data': data, 'message': {'chat': {'id': uid}, 'message_id': mid}})
+
+
+def _codes(markup):
+    return [b['callback_data'] for row in markup['inline_keyboard'] for b in row]
+
+
+def test_target_picker_defaults_toggle_type_send(env):
+    brand('type-brand', defaults=['instagram_story', 'instagram_trial', 'telegram_business_story'],
+          templates=[{'key': 'aksiya', 'name': '🏷 Aksiya', 'prompt': 'aksiya'}])
     with Session.begin() as db:
         db.add(Membership(telegram_id=7002, brand_slug='type-brand'))
+        db.add(Account(id='ty-ig', platform='instagram', external_id='IGT', brand_slug='type-brand', handle='t'))
+        db.add(Account(id='ty-tg', platform='telegram_business', external_id='BZT', brand_slug='type-brand', handle='b'))
     bot.handle_video(msg(7002, mid=11, video={'file_id': 'F1', 'file_size': 10}))
     with Session() as db:
         v = db.scalars(select(Video).where(Video.sender_id == 7002, Video.message_id == 11)).one()
-        assert v.status == 'awaiting_type' and v.sender_name == 'Ali'
-    datas = [b['callback_data'] for row in env['sent'][-1][2]['inline_keyboard'] for b in row]
-    assert f'ptype:{v.id}:aksiya' in datas and f'ptype:{v.id}:-' in datas
-    bot.handle_callback({'id': 'q', 'from': {'id': 7002}, 'data': f'ptype:{v.id}:aksiya', 'message': {'chat': {'id': 7002}}})
+        assert v.status == 'choosing' and v.sender_name == 'Ali'
+        assert v.targets == ['instagram_story', 'instagram_trial', 'telegram_business_story']   # brand defaults ticked
+    _, text, markup = env['sent'][-1]
+    labels = [b['text'] for row in markup['inline_keyboard'] for b in row]
+    assert '✅ 📸 Instagram Story' in labels and '⬜️ 🎞 Reels' in labels and '✅ 💬 Telegram Story' in labels
+    assert f'go:{v.id}' in _codes(markup) and f'tp:{v.id}:aksiya' in _codes(markup)
+    _press(7002, f'tg:{v.id}:ts')       # this time: no Telegram Story
+    _press(7002, f'tg:{v.id}:ir')       # ... but also normal Reels
+    _press(7002, f'tp:{v.id}:aksiya')
     with Session() as db:
         v2 = db.get(Video, v.id)
-        assert v2.status == 'queued' and v2.post_type == 'aksiya'
+        assert v2.targets == ['instagram_story', 'instagram_trial', 'instagram_reels'] and v2.post_type == 'aksiya'
+        assert v2.status == 'choosing'
+    assert env['prepared'] == []
+    _press(7002, f'go:{v.id}')
+    with Session() as db:
+        assert db.get(Video, v.id).status == 'queued'
     assert env['prepared'] == [v.id]
-    # a second video nobody types: the ticker continues it after 10 minutes
+    _press(7002, f'tg:{v.id}:is')       # after sending: no more changes
+    with Session() as db:
+        assert 'instagram_story' in db.get(Video, v.id).targets
+
+
+def test_picker_needs_one_target_and_times_out(env):
     bot.handle_video(msg(7002, mid=12, video={'file_id': 'F2', 'file_size': 10}))
+    with Session() as db:
+        v = db.scalars(select(Video).where(Video.message_id == 12, Video.sender_id == 7002)).one()
+    for code in ('is', 'it', 'ts'):
+        _press(7002, f'tg:{v.id}:{code}')
+    _press(7002, f'go:{v.id}')
+    assert 'Kamida bitta' in env['sent'][-1][1]
+    with Session() as db:
+        assert db.get(Video, v.id).status == 'choosing'
+    _press(7002, f'tg:{v.id}:is')
     with Session.begin() as db:
-        late = db.scalars(select(Video).where(Video.message_id == 12, Video.sender_id == 7002)).one()
-        late.created_at = timeutil.now_utc() - timedelta(minutes=11)
-    assert scheduler.continue_untyped(timeutil.now_utc()) == [late.id]
+        db.get(Video, v.id).created_at = timeutil.now_utc() - timedelta(minutes=11)
+    assert scheduler.continue_untyped(timeutil.now_utc()) == [v.id]   # sent with what is ticked
+    with Session() as db:
+        assert db.get(Video, v.id).targets == ['instagram_story']
     assert worker.template_prompt(Brand(templates=[{'key': 'aksiya', 'name': 'A', 'prompt': 'P'}]), 'aksiya').endswith('P')
+
+
+def test_prepare_uses_sender_targets(env, monkeypatch):
+    with Session.begin() as db:
+        db.add(Video(id='vtg', sender_id=7002, message_id=13, file_id='f', brand_slug='type-brand', status='queued',
+                     targets=['instagram_reels']))
+    monkeypatch.setattr(worker, 'get_file', lambda fid, dest: Path(dest).write_bytes(b'x'))
+    monkeypatch.setattr(worker, 'media_info', lambda p: {'duration': 20.0})
+    monkeypatch.setattr(worker, 'convert', lambda src, out, **k: Path(out).write_bytes(b'v') and out)
+    monkeypatch.setattr(worker, 'upload_blob', lambda local, key: key)
+    monkeypatch.setattr(worker, 'send_video', lambda *a, **k: None)
+    monkeypatch.setattr(worker, 'make_ai_description', lambda *a, **k: {'hook': 'h', 'caption': 'c', 'youtube_title': 't',
+                                                                    'youtube_description': 'd', 'flag': ''})
+    worker.prepare_video('vtg')
+    with Session() as db:
+        assert {p.surface for p in db.scalars(select(Publication).where(Publication.video_id == 'vtg'))} == {'instagram_reels'}
 
 
 # ---------- 4. scheduling ----------
@@ -186,12 +238,14 @@ def test_photo_pipeline(photo_env, env):
     bot.handle_video(msg(7003, mid=31, photo=[{'file_id': 'small', 'file_size': 1}, {'file_id': 'BIG', 'file_size': 5}]))
     with Session() as db:
         v = db.scalars(select(Video).where(Video.sender_id == 7003)).one()
-        assert v.media_kind == 'photo' and v.file_id == 'BIG' and v.status == 'queued'
+        assert v.media_kind == 'photo' and v.file_id == 'BIG' and v.status == 'choosing'
+    _press(7003, f'go:{v.id}')
+    with Session() as db:
+        assert db.get(Video, v.id).targets == ['instagram_story', 'instagram_post', 'telegram_business_story']
     worker.prepare_video(v.id)
     with Session() as db:
         plan = {(p.surface, p.status) for p in db.scalars(select(Publication).where(Publication.video_id == v.id))}
-    assert plan == {('instagram_story', 'queued'), ('instagram_post', 'queued'), ('youtube_shorts', 'skipped'),
-                    ('telegram_business_story', 'queued')}
+    assert plan == {('instagram_story', 'queued'), ('instagram_post', 'queued'), ('telegram_business_story', 'queued')}
     for name, size in [('story_1.jpg', (1080, 1920)), ('vertical.jpg', (1080, 1350))]:
         out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0',
                               str(store / f'media__photo-brand__{v.id}__{name}')], capture_output=True, text=True).stdout.strip()
@@ -216,6 +270,7 @@ def test_auto_publish_uses_next_free_slot(photo_env, env):
         bot.handle_video(msg(7003, mid=mid, photo=[{'file_id': f'P{mid}', 'file_size': 5}]))
         with Session() as db:
             vid = db.scalars(select(Video).where(Video.sender_id == 7003, Video.message_id == mid)).one().id
+        _press(7003, f'go:{vid}')
         worker.prepare_video(vid); ids.append(vid)
     with Session() as db:
         times = [timeutil.aware(db.get(Video, i).scheduled_at) for i in ids]

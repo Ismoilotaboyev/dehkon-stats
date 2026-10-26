@@ -265,6 +265,8 @@ def prepare_video(video_id):
         v.status='processing'
         stored={'id':v.id,'file_id':v.file_id,'brand':v.brand_slug,'description':v.description,'sender':v.sender_id,
                 'file_size':v.file_size,'kind':v.media_kind or 'video','post_type':v.post_type or ''}
+        # The sender's picks for this video win over the brand defaults.
+        chosen=v.targets
         defaults=list(brand.defaults or [])
         accounts=[(a.id,a.platform) for a in db.scalars(select(Account).where(Account.brand_slug==brand.slug,Account.status=='active'))]
     sender=stored['sender'];kind=stored['kind']
@@ -274,7 +276,11 @@ def prepare_video(video_id):
         with Session.begin() as db:
             db.get(Video,video_id).status='no_accounts'
         send(sender,'⚠️ Brendga hali birorta faol akkaunt ulanmagan. /accounts '+stored['brand']+' bilan tekshiring.');return
-    targets=plan_targets([(aid,s) for aid,platform in accounts for s in surfaces_for_platform(platform) if s in defaults],kind)
+    if chosen is not None:
+        targets=[(aid,s,'') for aid,platform in accounts for s in surfaces_for_platform(platform)+(['instagram_post'] if platform=='instagram' and kind=='photo' else [])
+                 if s in chosen and (kind!='photo' or s not in ('instagram_reels','instagram_trial','youtube_shorts'))]
+    else:
+        targets=plan_targets([(aid,s) for aid,platform in accounts for s in surfaces_for_platform(platform) if s in defaults],kind)
     if not targets:
         with Session.begin() as db:
             db.get(Video,video_id).status='no_targets'

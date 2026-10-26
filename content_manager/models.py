@@ -82,6 +82,8 @@ class Video(Base):
     approved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     media_kind: Mapped[str] = mapped_column(String(10), default='video')   # video | photo
     post_type: Mapped[str] = mapped_column(String(40), default='')         # Brand.templates key
+    # Surfaces the sender ticked for this one video (None = the brand's defaults).
+    targets: Mapped[list | None] = mapped_column(JSON, nullable=True)
     sender_name: Mapped[str] = mapped_column(String(200), default='')
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

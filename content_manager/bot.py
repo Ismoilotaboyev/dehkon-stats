@@ -229,11 +229,10 @@ def handle_callback(callback):
             allowed={b.slug for b in permitted_brands(db,actor)}
             if not v or v.sender_id!=actor or v.brand_slug or slug not in allowed:
                 send(chat,'⛔ Video yoki ruxsat noto‘g‘ri.');return
-            v.brand_slug=slug;brand=db.get(Brand,slug);has_types=bool(brand.templates)
-            v.status='awaiting_type' if has_types else 'queued'
-        if has_types: ask_post_type(chat,video_id,slug);return
-        enqueue_video(video_id)
-        send(chat,'✅ '+slug+' uchun qabul qilindi. AI tahlildan so‘ng joylanadi.');return
+            v.brand_slug=slug;v.status='choosing'
+        start_picker(chat,video_id);return
+    if data.startswith(('tg:','tp:','go:')):
+        picker_action(actor,chat,callback['message'].get('message_id'),data);return
     if data.startswith('ptype:'):
         _,video_id,key=data.split(':',2)
         choose_post_type(actor,chat,video_id,'' if key=='-' else key);return
@@ -438,18 +437,96 @@ def handle_video(msg):
         if old: return
         v=Video(sender_id=actor,message_id=msg['message_id'],file_id=f['file_id'],file_size=f.get('file_size',0),
                 description=msg.get('caption',''),media_kind=kind,sender_name=name[:200])
-        has_types=False
         if len(brands)==1:
-            v.brand_slug=brands[0].slug;has_types=bool(brands[0].templates)
-            v.status='awaiting_type' if has_types else 'queued'
+            v.brand_slug=brands[0].slug;v.status='choosing'
         db.add(v);db.flush(); video_id=v.id
     what='Rasm' if kind=='photo' else 'Video'
     if len(brands)==1:
-        if has_types: ask_post_type(chat,video_id,brands[0].slug);return
-        enqueue_video(video_id)
-        send(chat,f'🎬 {what} qabul qilindi: {brands[0].name}. AI tahlildan so‘ng joylanadi.');return
+        start_picker(chat,video_id);return
     rows=[[(b.name,f'pick:{video_id}:{b.slug}')] for b in brands]
     send(chat,f'Ushbu {what.lower()}ni qaysi brendga joylaymiz?',inline(rows))
+
+
+# ---- per-video "where to publish" picker (defaults pre-ticked) ----
+SURFACE_CODES={'is':'instagram_story','ir':'instagram_reels','it':'instagram_trial','ip':'instagram_post',
+               'yt':'youtube_shorts','ts':'telegram_business_story'}
+CODE_OF={v:k for k,v in SURFACE_CODES.items()}
+SURFACE_LABELS={'instagram_story':'📸 Instagram Story','instagram_reels':'🎞 Reels','instagram_trial':'🧪 Trial Reels',
+                'instagram_post':'🖼 Instagram post','youtube_shorts':'▶️ YouTube Shorts','telegram_business_story':'💬 Telegram Story'}
+
+
+def available_surfaces(db,slug,kind):
+    platforms={a.platform for a in db.scalars(select(Account).where(Account.brand_slug==slug,Account.status=='active'))}
+    out=[]
+    if 'instagram' in platforms:
+        out+=['instagram_story','instagram_post'] if kind=='photo' else ['instagram_story','instagram_trial','instagram_reels']
+    if 'telegram_business' in platforms:out.append('telegram_business_story')
+    if 'youtube' in platforms and kind!='photo':out.append('youtube_shorts')
+    return out
+
+
+def default_targets(brand,kind,available):
+    d=set(brand.defaults or [])
+    if kind=='photo' and d&{'instagram_reels','instagram_trial'}:d.add('instagram_post')
+    return [s for s in available if s in d]
+
+
+def picker_view(video_id):
+    """(text, markup) of the picker for one video."""
+    with Session.begin() as db:
+        v=db.get(Video,video_id);b=db.get(Brand,v.brand_slug)
+        avail=available_surfaces(db,v.brand_slug,v.media_kind or 'video')
+        if v.targets is None:v.targets=default_targets(b,v.media_kind or 'video',avail)
+        chosen=set(v.targets);ptype=v.post_type or '';templates=list(b.templates or []);bname=b.name;kind=v.media_kind
+    rows=[];cells=[((('✅ ' if s in chosen else '⬜️ ')+SURFACE_LABELS[s]),f'tg:{video_id}:{CODE_OF[s]}') for s in avail]
+    for i in range(0,len(cells),2):rows.append(cells[i:i+2])
+    if templates:
+        tcells=[((('🔘 ' if t['key']==ptype else '⚪️ ')+t['name'])[:40],f'tp:{video_id}:{t["key"]}') for t in templates]
+        for i in range(0,len(tcells),2):rows.append(tcells[i:i+2])
+    rows.append([('🚀 Yuborish',f'go:{video_id}')])
+    what='rasm' if kind=='photo' else 'video'
+    text=(f'📤 {bname}: {what}ni qayerga joylaymiz?\n✅ belgilanganlarga ketadi — bosib yoqing yoki o‘chiring.'
+          +('\n\nPost turi (ixtiyoriy) — AI shu turga mos yozadi.' if templates else '')
+          +'\n\nTayyor bo‘lsa «🚀 Yuborish». 10 daqiqada bosilmasa, belgilanganlariga o‘zi ketadi.')
+    if not avail:text=f'⚠️ {bname}: hali birorta akkaunt ulanmagan.'
+    return text,inline(rows)
+
+
+def start_picker(chat,video_id):
+    text,markup=picker_view(video_id)
+    send(chat,text,markup)
+
+
+def _refresh_picker(chat,message_id,video_id):
+    text,markup=picker_view(video_id)
+    try:telegram('editMessageReplyMarkup',{'chat_id':chat,'message_id':message_id,'reply_markup':json.dumps(markup,ensure_ascii=False)})
+    except Exception:send(chat,text,markup)
+
+
+def picker_action(actor,chat,message_id,data):
+    kind,video_id,code=(data.split(':',2)+[''])[:3]
+    with Session.begin() as db:
+        v=db.get(Video,video_id)
+        if not v or v.sender_id!=actor or v.status!='choosing':
+            send(chat,'ℹ️ Bu video allaqachon yuborilgan.');return
+        if kind=='tg':
+            s=SURFACE_CODES.get(code)
+            if not s:return
+            cur=list(v.targets or [])
+            v.targets=[x for x in cur if x!=s] if s in cur else cur+[s]
+        elif kind=='tp':
+            v.post_type='' if v.post_type==code else code
+        elif kind=='go':
+            if not v.targets:
+                send(chat,'⚠️ Kamida bitta joyni tanlang.');return
+            v.status='queued';chosen=list(v.targets)
+    if kind=='go':
+        enqueue_video(video_id)
+        names=', '.join(SURFACE_LABELS.get(s,s) for s in chosen)
+        try:telegram('editMessageText',{'chat_id':chat,'message_id':message_id,'text':f'🚀 Yuborildi: {names}\nAI tahlildan so‘ng joylanadi.'})
+        except Exception:send(chat,f'🚀 Yuborildi: {names}\nAI tahlildan so‘ng joylanadi.')
+        return
+    _refresh_picker(chat,message_id,video_id)
 
 
 def ask_post_type(chat,video_id,slug):
