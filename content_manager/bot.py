@@ -310,7 +310,7 @@ def handle_approval(actor,chat,action,video_id):
             if not v or v.status!='awaiting_approval':
                 send(chat,'ℹ️ Bu video allaqachon ko‘rib chiqilgan yoki topilmadi.');return
         rclient().setex(f'pending:{actor}',600,'editcap:'+video_id)
-        send(chat,'✏️ Yangi caption matnini bitta xabar qilib yuboring (Instagram Reels va Telegram Story uchun, 2200 belgigacha).\nHook videoga yozilgan, u o‘zgarmaydi. YouTube matni o‘zgarmaydi.')
+        send(chat,'✏️ Yangi caption matnini bitta xabar qilib yuboring (Instagram Reels va Telegram Story uchun, 2200 belgigacha).\nYouTube matni o‘zgarmaydi.')
         return
 
 

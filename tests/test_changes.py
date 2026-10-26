@@ -193,7 +193,11 @@ def e2e(monkeypatch, tmp_path):
 @pytest.mark.skipif(not HAS_FFMPEG, reason='ffmpeg not installed')
 def test_prepare_approve_publish(e2e, monkeypatch):
     calls, store = e2e
+    hooks = []
+    real_convert = worker.convert
+    monkeypatch.setattr(worker, 'convert', lambda *a, **k: hooks.append(k.get('hook')) or real_convert(*a, **k))
     worker.prepare_video('ve')
+    assert hooks and all(h is None for h in hooks)  # no text drawn on any video by default
 
     with Session() as db:
         v = db.get(Video, 've')
@@ -204,7 +208,7 @@ def test_prepare_approve_publish(e2e, monkeypatch):
                     ('instagram_reels', 1): 'queued', ('instagram_trial', 1): 'skipped',
                     ('youtube_shorts', 1): 'queued',
                     ('telegram_business_story', 1): 'queued', ('telegram_business_story', 2): 'queued'}
-    # Story parts are <= 60 s, sizes right, hook only drawn on part 1 (rendered fine)
+    # Story parts are <= 60 s and the right size
     for name in ['story_1', 'story_2', 'tgstory_1', 'tgstory_2']:
         f = store / f'media__e2e-brand__ve__{name}.mp4'
         info = worker.media_info(f)
@@ -214,6 +218,7 @@ def test_prepare_approve_publish(e2e, monkeypatch):
     assert calls['ig'] == [] and calls['videos'] and calls['videos'][0][0] == 1
     preview = [t for c, t, m in calls['sent'] if c == 1 and m]
     assert preview and 'Instagram Story → e2e_ig (2 qism' in preview[0] and 'Trial Reels yoqilmagan' in preview[0]
+    assert 'Hook (Story videosiga yozilgan)' not in preview[0]
     assert any(c == 777 and 'tasdig' in t for c, t, _ in calls['sent'])
 
     # publish before approval does nothing

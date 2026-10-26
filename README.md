@@ -14,7 +14,7 @@ Python 3.12 + FastAPI, PostgreSQL, Redis/RQ, Railway S3 bucket, OpenAI Speech-to
 - Video kelganda yagona brend bo‘lsa avtomatik tanlanadi; ko‘p brend bo‘lsa tanlatiladi.
 - RQ navbat, video normalizatsiya (1080×1920), AI nutq+3 kadr orqali matn, Story uchun ustma-ust hook.
 - **Super Admin tasdig‘i:** hech bir video avtomatik joylanmaydi. AI tayyorlagan video, hook, caption, YouTube matni va qaysi akkauntlarga joylanishi Super Admin'ga yuboriladi: `✅ Joylash` / `✏️ Matnni o‘zgartirish` / `❌ Bekor`.
-- **Uzun Story bo‘laklanadi:** 60 soniyadan uzun video Instagram Story va Telegram Business Story uchun teng, har biri ≤59 s qismlarga bo‘linadi va ketma-ket joylanadi (hook faqat 1-qismda). Bir qism xato bersa, keyingi qismlar joylanmaydi. Qismlar soni limiti `STORY_MAX_PARTS` (default 10).
+- **Uzun Story bo‘laklanadi:** 60 soniyadan uzun video Instagram Story va Telegram Business Story uchun teng, har biri ≤59 s qismlarga bo‘linadi va ketma-ket joylanadi (videoga matn yozilmaydi; `STORY_HOOK_OVERLAY=true` bo‘lsa hook 1-qismga yoziladi). Bir qism xato bersa, keyingi qismlar joylanmaydi. Qismlar soni limiti `STORY_MAX_PARTS` (default 10).
 - **Local Bot API server:** `telegram-bot-api/` servisi orqali 2 GB gacha video qabul qilinadi.
 - **Alembic migratsiyalar:** `content-api` har ishga tushganda `alembic upgrade head` bajariladi.
 - Instagram Business Login OAuth, YouTube OAuth, Telegram Business connection qabul qilish va brendga admin biriktirishi.

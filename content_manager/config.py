@@ -34,6 +34,11 @@ def max_bot_upload_bytes():
     return (2000 if local_bot_api() else 50) * 1024 * 1024
 
 
+def story_hook_overlay():
+    """Draw the AI hook text onto the first Story part. Off by default: Stories go out as the clean video."""
+    return env('STORY_HOOK_OVERLAY', 'false').lower() == 'true'
+
+
 def encrypt(value: str) -> str:
     return Fernet(env('FERNET_KEY').encode()).encrypt(value.encode()).decode()
 

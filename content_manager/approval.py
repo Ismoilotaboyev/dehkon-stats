@@ -3,6 +3,7 @@ from collections import OrderedDict
 from sqlalchemy import select
 from .models import Session, Video, Brand, Account, Publication
 from .telegram_api import inline
+from .config import story_hook_overlay
 
 SURFACE_NAMES = {
     'instagram_story': 'Instagram Story',
@@ -67,8 +68,8 @@ def preview_text(video_id):
     text = (
         f'🕵️ Tasdiqlash kerak — {brand_name}\n'
         f'Yuboruvchi: {data["sender"]} · Davomiyligi: {data["duration"]:.0f} s\n\n'
-        f'🪝 Hook (Story videosiga yozilgan): {data["hook"]}\n\n'
-        f'📝 Caption:\n{data["caption"][:1500]}\n\n'
+        + (f'🪝 Hook (Story videosiga yozilgan): {data["hook"]}\n\n' if story_hook_overlay() else '')
+        + f'📝 Caption:\n{data["caption"][:1500]}\n\n'
         f'▶️ YouTube sarlavha: {data["yt_title"]}\n'
         f'▶️ YouTube tavsif: {data["yt_desc"][:600]}\n\n'
         f'📤 Joylanadi:\n' + '\n'.join(plan)

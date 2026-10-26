@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 import requests
 from sqlalchemy import select
-from .config import env, superadmins, local_bot_api, max_download_bytes, max_bot_upload_bytes, telegram_api_base
+from .config import env, story_hook_overlay, superadmins, local_bot_api, max_download_bytes, max_bot_upload_bytes, telegram_api_base
 from .models import Session, Video, Account, Brand, Membership, Publication, Audit
 from .telegram_api import telegram, send, send_video
 from .publishers import upload_blob, download_blob, public_temporary_url, ig_publish, youtube_publish, telegram_business_story
@@ -208,6 +208,7 @@ def prepare_video(video_id):
             captions=make_ai_description(source,brand,stored['description'])
             key=main_key(stored['brand'],video_id); upload_blob(standard,key)
             segments=story_segments(duration)
+            overlay=captions['hook'] if story_hook_overlay() else None
             ig_parts=tg_parts=0; ig_reason=tg_reason=''
             if (need_story or need_tg) and len(segments)>story_max_parts():
                 ig_reason=tg_reason=f'Story uchun {len(segments)} qism kerak bo‘lardi, limit {story_max_parts()} (STORY_MAX_PARTS)'
@@ -215,8 +216,8 @@ def prepare_video(video_id):
                 try:
                     for i,(start,length) in enumerate(segments,1):
                         out=p/f'story_{i}.mp4'
-                        # Hook is drawn on the first part only.
-                        convert(source,out,hook=captions['hook'] if i==1 else None,start=start,length=length)
+                        # Clean video by default; with STORY_HOOK_OVERLAY=true the hook is drawn on part 1 only.
+                        convert(source,out,hook=overlay if i==1 else None,start=start,length=length)
                         upload_blob(out,story_key(stored['brand'],video_id,i)); out.unlink()
                     ig_parts=len(segments)
                 except Exception as exc:ig_reason='Story tayyorlanmadi: '+str(exc)[:200]
@@ -224,7 +225,7 @@ def prepare_video(video_id):
                 try:
                     for i,(start,length) in enumerate(segments,1):
                         out=p/f'tgstory_{i}.mp4'
-                        convert(source,out,hook=captions['hook'] if i==1 else None,size=(720,1280),max_mb=30,start=start,length=length)
+                        convert(source,out,hook=overlay if i==1 else None,size=(720,1280),max_mb=30,start=start,length=length)
                         upload_blob(out,tg_story_key(stored['brand'],video_id,i)); out.unlink()
                     tg_parts=len(segments)
                 except Exception as exc:tg_reason='Telegram Story tayyorlanmadi: '+str(exc)[:200]
