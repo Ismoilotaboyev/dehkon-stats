@@ -26,9 +26,19 @@ def tg_story_key(brand, video_id, part):
     return f'media/{brand}/{video_id}/tgstory_{part}.mp4'
 
 
-def approval_markup(video_id):
+def ai_flag(video):
+    """Reason the AI flagged this video, or '' (stored in Video.error while awaiting approval)."""
+    err = video.error or ''
+    return err[len('AI_FLAG:'):] if err.startswith('AI_FLAG:') else ''
+
+
+def approval_markup(video_id, flagged=None):
+    if flagged is None:
+        with Session() as db:
+            v = db.get(Video, video_id)
+            flagged = bool(v and ai_flag(v))
     return inline([
-        [('✅ Joylash', f'appr:ok:{video_id}')],
+        [('✅ Baribir joylash' if flagged else '✅ Joylash', f'appr:ok:{video_id}')],
         [('✏️ Matnni o‘zgartirish', f'appr:edit:{video_id}'), ('❌ Bekor', f'appr:no:{video_id}')],
     ])
 
@@ -62,11 +72,14 @@ def preview_text(video_id):
         v = db.get(Video, video_id)
         b = db.get(Brand, v.brand_slug)
         brand_name = b.name if b else v.brand_slug
+        flag = ai_flag(v)
         data = dict(sender=v.sender_id, duration=v.duration, hook=v.hook, caption=v.caption,
                     yt_title=v.youtube_title, yt_desc=v.youtube_description)
     plan = plan_lines(video_id) or ['Hech qaysi format belgilanmagan.']
     text = (
-        f'🕵️ Tasdiqlash kerak — {brand_name}\n'
+        (f'⚠️ AI OGOHLANTIRISHI: {flag}\n'
+         'Matn va videoni tekshiring. To‘g‘ri bo‘lsa “✅ Baribir joylash”, aks holda ✏️ yoki ❌.\n\n' if flag else '')
+        + f'🕵️ Tasdiqlash kerak — {brand_name}\n'
         f'Yuboruvchi: {data["sender"]} · Davomiyligi: {data["duration"]:.0f} s\n\n'
         + (f'🪝 Hook (Story videosiga yozilgan): {data["hook"]}\n\n' if story_hook_overlay() else '')
         + f'📝 Caption:\n{data["caption"][:1500]}\n\n'

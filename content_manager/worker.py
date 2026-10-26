@@ -152,7 +152,7 @@ def make_ai_description(input_video,brand,video_note):
             b64=base64.b64encode(shot.read_bytes()).decode()
             visual.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+b64,'detail':'low'})
         except Exception:pass
-    prompt='''Quyidagi brend uchun video reklama mazmunini tahlil qil. FAQAT JSON qaytar: {"hook":"...", "caption":"...", "youtube_title":"...", "youtube_description":"...", "block_publish": false, "reason":""}. Uzbek lotinida yoz. Hook maksimum 9 so‘z. Caption 500 belgigacha, CTA ham qo‘sh. '''+CAPTION_FORMAT+''' Youtube title #Shorts bilan 100 belgidan qisqa. Mahsulot narxini, chegirma, kasallikni davolash ta'sirini, xavfsizlik va tibbiy da'volarni videoda aniq asos bo‘lmasa to‘qima. Agar reklama tibbiy zarar, yolg‘on da'vo yoki videoda nima borligini tushunib bo‘lmasa block_publish true belgilagin. Brend haqida ma'lumotni boshqa brendlardan olma. Brend qoidalari: '''+brand.ai_prompt
+    prompt='''Quyidagi brend uchun video reklama mazmunini tahlil qil. FAQAT JSON qaytar: {"hook":"...", "caption":"...", "youtube_title":"...", "youtube_description":"...", "block_publish": false, "reason":""}. Uzbek lotinida yoz. Hook maksimum 9 so‘z. Caption 500 belgigacha, CTA ham qo‘sh. '''+CAPTION_FORMAT+''' Youtube title #Shorts bilan 100 belgidan qisqa. Mahsulot narxini, chegirma, kasallikni davolash ta'sirini, xavfsizlik va tibbiy da'volarni videoda aniq asos bo‘lmasa to‘qima. Agar reklama tibbiy zarar, yolg‘on da'vo yoki videoda nima borligini tushunib bo‘lmasa block_publish true belgilagin va reason ga sababini qisqa yoz. block_publish true bo‘lsa ham hook, caption va youtube maydonlarini baribir to‘ldir: videoni Super Admin ko‘rib chiqadi va o‘zi qaror qiladi; o‘z matningda tasdiqlanmagan tibbiy da'vo yozma. Brend haqida ma'lumotni boshqa brendlardan olma. Brend qoidalari: '''+brand.ai_prompt
     content=[{'type':'input_text','text':prompt+'\nVideo izohi: '+(video_note or '')+'\nTranscript: '+transcript[:12000]}]+visual
     output=api.responses.create(model=env('OPENAI_VISION_MODEL','gpt-4.1-mini'),input=[{'role':'user','content':content}])
     raw=output.output_text.strip()
@@ -162,7 +162,8 @@ def make_ai_description(input_video,brand,video_note):
     for k in ('hook','caption','youtube_title','youtube_description'):
         if k not in d:raise ValueError('AI JSON response missing field '+k)
     d['caption']=format_caption(d['caption'])
-    if d.get('block_publish'):raise ValueError('AI kontentni tekshiruvga yubordi: '+str(d.get('reason',''))[:200])
+    # A flag no longer stops the pipeline: the Super Admin sees the warning in the preview and decides.
+    d['flag']=str(d.get('reason') or 'Sabab ko‘rsatilmagan')[:500] if d.get('block_publish') else ''
     return d
 
 
@@ -282,12 +283,14 @@ def prepare_video(video_id):
                 v=db.get(Video,video_id)
                 v.object_key=key;v.duration=duration;v.story_parts=ig_parts;v.tg_story_parts=tg_parts
                 v.caption=captions['caption'];v.hook=captions['hook'];v.youtube_title=captions['youtube_title'];v.youtube_description=captions['youtube_description']
+                v.error=('AI_FLAG:'+captions['flag']) if captions.get('flag') else ''
                 v.status='awaiting_approval'
         except Exception as exc:
             fail(video_id,sender,'Video tayyorlashda xatolik: '+str(exc));raise
         send_preview(video_id,standard)
     if sender not in superadmins():
-        send(sender,'🕵️ Video tayyor va Super Admin tasdig‘iga yuborildi. Tasdiqlangach joylanadi.')
+        send(sender,'🕵️ Video tayyor va Super Admin tasdig‘iga yuborildi. Tasdiqlangach joylanadi.'
+             +('\n⚠️ AI ogohlantirish qoldirdi, qarorni Super Admin qiladi.' if captions.get('flag') else ''))
 
 
 def publish_video(video_id):

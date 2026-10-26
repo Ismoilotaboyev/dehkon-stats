@@ -351,8 +351,11 @@ def handle_approval(actor,chat,action,video_id):
             v=db.get(Video,video_id)
             if not v or v.status!='awaiting_approval':
                 send(chat,'ℹ️ Bu video allaqachon ko‘rib chiqilgan yoki topilmadi.');return
+            flagged=(v.error or '').startswith('AI_FLAG:')
             v.status='approved';v.approved_by=actor;sender=v.sender_id
-            db.add(Audit(actor=actor,action='approved',brand_slug=v.brand_slug,details=video_id))
+            # Super Admin overrode an AI warning: keep that on record.
+            db.add(Audit(actor=actor,action='approved_over_ai_flag' if flagged else 'approved',brand_slug=v.brand_slug,
+                         details=(video_id+' | '+v.error[:400]) if flagged else video_id))
         enqueue_publish(video_id)
         send(chat,'✅ Tasdiqlandi. Joylash boshlandi, hisobot keladi.')
         if sender!=actor: send(sender,'✅ Videongiz tasdiqlandi va joylanmoqda.')

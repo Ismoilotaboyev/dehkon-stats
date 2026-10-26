@@ -439,3 +439,22 @@ def test_phone_migration(tmp_path):
     run('upgrade', 'head'); run('upgrade', 'head')
     prompt = c.execute("SELECT ai_prompt FROM brands").fetchone()[0]
     assert prompt.startswith('Eski uslub.') and prompt.count('55 588 60 60') == 1
+
+
+# ---------- AI flag -> warning + override ----------
+
+def test_ai_flag_shows_warning_and_override(botmocks):
+    from content_manager.approval import preview_text, approval_markup
+    from content_manager.models import Audit
+    sent, queued, _ = botmocks
+    make_waiting_video('vf1', 1101)
+    with Session.begin() as db:
+        db.get(Video, 'vf1').error = 'AI_FLAG:Davolash haqida tibbiy da’vo bor'
+    text = preview_text('vf1')
+    assert text.startswith('⚠️ AI OGOHLANTIRISHI: Davolash haqida')
+    assert approval_markup('vf1')['inline_keyboard'][0][0]['text'] == '✅ Baribir joylash'
+    assert approval_markup('va1')['inline_keyboard'][0][0]['text'] == '✅ Joylash'
+    bot.handle_approval(1, 1, 'ok', 'vf1')
+    assert 'vf1' in queued
+    with Session() as db:
+        assert db.scalars(select(Audit).where(Audit.action == 'approved_over_ai_flag')).first() is not None
