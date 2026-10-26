@@ -523,3 +523,34 @@ def test_auto_toggle_button(botmocks):
         assert db.get(Brand, 'tog-brand').auto_publish is True
     assert 'Avto-joylash yoqildi' in sent[-2][1]
     assert 'YOQIQ' in str(sent[-1][2])
+
+
+def test_buttons_replace_typed_commands(botmocks, monkeypatch):
+    sent, _, _ = botmocks
+    notes = []
+    monkeypatch.setattr(bot, 'notify_admins', lambda text, markup=None: notes.append((text, markup)))
+    monkeypatch.setattr(bot, 'telegram', lambda *a, **k: None)
+    with Session.begin() as db:
+        if not db.get(Brand, 'btn-brand'):
+            db.add(Brand(slug='btn-brand', name='Btn Brand', defaults=[]))
+    # new Business connection -> brand buttons, one tap binds it
+    bot.handle_business_connection(_biz('B1', owner=9100))
+    text, markup = notes[-1]
+    with Session() as db:
+        brands = db.scalars(select(Brand).order_by(Brand.slug)).all()
+        aid = db.scalars(select(Account).where(Account.external_id == 'B1')).one().id
+    idx = [b.slug for b in brands].index('btn-brand')
+    data = f'biz:{aid}:{idx}'
+    assert any(btn['callback_data'] == data for row in markup['inline_keyboard'] for btn in row)
+    assert all(len(btn['callback_data'].encode()) <= 64 for row in markup['inline_keyboard'] for btn in row)
+    bot.handle_callback({'id': 'q', 'from': {'id': 1}, 'data': data, 'message': {'chat': {'id': 1}}})
+    with Session() as db:
+        assert db.get(Account, aid).brand_slug == 'btn-brand'
+    assert 'Telegram Story joylanadi' in sent[-1][1]
+    # new brand -> connect buttons, no commands to type
+    bot.add_brand(1, 1, 'Abbos Sultanov')
+    assert '/connectig' not in sent[-1][1]
+    assert 'admin:ig:abbos-sultanov' in str(sent[-1][2])
+    # Trial panel of a brand without Instagram offers the connect button
+    bot.trial_panel(1, 'abbos-sultanov')
+    assert 'admin:ig:abbos-sultanov' in str(sent[-1][2])

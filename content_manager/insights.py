@@ -69,8 +69,9 @@ def check_publication(pub_id, hours):
         text = str(exc)
         if surface != 'youtube_shorts' and ('permission' in text.lower() or '#10' in text or 'OAuthException' in text) \
                 and _once_per_day(f'insights-perm:{account.id}'):
-            notify_admins(f'📈 Instagram statistikasini olish uchun yangi ruxsat kerak.\n'
-                          f'Botga /connectig {brand_slug} yozing va qayta ulang (1 daqiqa).')
+            notify_admins(f'📈 {brand_name}: Instagram statistikasini olish uchun yangi ruxsat kerak.\n'
+                          'Pastdagi tugmani bosib qayta ulang (1 daqiqa).',
+                          {'inline_keyboard': [[{'text': '📸 Instagram qayta ulash', 'callback_data': 'admin:ig:' + brand_slug}]]})
         return
     with Session.begin() as db:
         db.add(PostMetric(publication_id=pub_id, hours=hours, views=m['views'], reach=m['reach'], likes=m['likes'],
@@ -146,7 +147,7 @@ def send_weekly_report():
             log.exception('Weekly report to %s failed', admin)
 
 
-def connection_problems():
+def connection_problems(fix=None):
     """Human-readable list of broken connections (empty list = all fine)."""
     from .publishers import ig_health, youtube_health, ig_token_expires_at
     problems = []
@@ -160,7 +161,8 @@ def connection_problems():
                 ig_health(a)
                 left = ig_token_expires_at(a) - int(now_utc().timestamp())
                 if 0 < left < 3 * 86400:
-                    problems.append(f'📸 {brand} Instagram ({a.handle}): token {left // 3600} soatda tugaydi — /connectig {a.brand_slug}')
+                    problems.append(f'📸 {brand} Instagram ({a.handle}): token {left // 3600} soatda tugaydi — qayta ulang')
+                    if fix is not None: fix.append(('ig', a.brand_slug, f'📸 {brand} Instagram qayta ulash'))
             elif a.platform == 'youtube' and a.status == 'active':
                 youtube_health(a)
             elif a.platform == 'telegram_business' and a.status != 'active':
@@ -169,13 +171,17 @@ def connection_problems():
             elif a.status != 'active':
                 problems.append(f'🔗 {brand} {a.platform} ({a.handle}): holati {a.status}')
         except Exception as exc:
-            cmd = '/connectig' if a.platform == 'instagram' else '/connectyoutube'
-            problems.append(f'⚠️ {brand} {a.platform} ({a.handle}) ishlamayapti: {str(exc)[:120]}\n   Qayta ulash: {cmd} {a.brand_slug}')
+            problems.append(f'⚠️ {brand} {a.platform} ({a.handle}) ishlamayapti: {str(exc)[:120]}\n   Qayta ulash: pastdagi tugma')
+            if fix is not None and a.platform in ('instagram', 'youtube'):
+                code = 'ig' if a.platform == 'instagram' else 'yt'
+                fix.append((code, a.brand_slug, ('📸 ' if code == 'ig' else '▶️ ') + f'{brand} {a.platform} qayta ulash'))
     return problems
 
 
 def check_connections():
-    problems = connection_problems()
+    fix = []
+    problems = connection_problems(fix)
     if problems:
+        rows = [[{'text': label, 'callback_data': f'admin:{code}:{slug}'}] for code, slug, label in dict.fromkeys(fix)]
         notify_admins('🔌 Ulanishlarni tekshirish: muammo topildi\n\n' + '\n\n'.join(problems)
-                      + '\n\nTuzatilmasa, bu platformalarga postlar chiqmaydi.')
+                      + '\n\nTuzatilmasa, bu platformalarga postlar chiqmaydi.', {'inline_keyboard': rows} if rows else None)

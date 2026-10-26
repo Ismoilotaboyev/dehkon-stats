@@ -361,7 +361,7 @@ def test_insights_permission_hint(env, monkeypatch):
     monkeypatch.setattr(insights, 'fetch_metrics', boom)
     monkeypatch.setattr(insights, '_once_per_day', lambda key: True)
     insights.check_publication('pp1', 24)
-    assert '/connectig perm-brand' in env['notes'][-1][0]
+    assert 'admin:ig:perm-brand' in str(env['notes'][-1])
 
 
 # ---------- 7. report ----------
@@ -391,7 +391,7 @@ def test_connection_check_reports_broken(env, monkeypatch):
     monkeypatch.setattr(publishers, 'ig_token_expires_at', lambda a: 0)
     problems = insights.connection_problems()
     joined = '\n'.join(problems)
-    assert 'HL instagram (hl) ishlamayapti' in joined and '/connectig hl-brand' in joined
+    assert 'HL instagram (hl) ishlamayapti' in joined and 'pastdagi tugma' in joined
     assert 'HL Telegram Business' in joined
     insights.check_connections()
     assert env['notes'][-1][0].startswith('🔌 Ulanishlarni tekshirish')

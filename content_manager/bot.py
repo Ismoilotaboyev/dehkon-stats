@@ -180,21 +180,7 @@ def handle_text(msg):
             send(chat,f'✅ {tokens[1]} uchun formatlar: '+', '.join(values)); return
         if cmd=='/bindbiz':
             if len(tokens)!=3: raise ValueError('Sintaksis: /bindbiz account_id brand-slug')
-            with Session.begin() as db:
-                a=db.get(Account,tokens[1]);b=db.get(Brand,tokens[2])
-                if not a or a.platform!='telegram_business' or a.brand_slug is not None or not b:raise ValueError('Akkaunt yoki brend topilmadi / oldin biriktirilgan')
-                a.brand_slug=b.slug
-                # 'pending' = enabled with Story rights; 'disabled' = no rights / switched off: keep it off.
-                ready=a.status in ('pending','active')
-                a.status='active' if ready else 'disabled'
-                for old in db.scalars(select(Account).where(Account.platform=='telegram_business',Account.handle==a.handle,
-                                                            Account.brand_slug==b.slug,Account.id!=a.id)):
-                    old.status='replaced'
-                db.add(Audit(actor=actor,action='bindbiz',brand_slug=b.slug,details=a.external_id))
-            if ready: send(chat,'✅ Telegram Business brendga biriktirildi. Telegram Story joylanadi.')
-            else: send(chat,'⚠️ Brendga biriktirildi, lekin bu ulanishda Story ruxsati yo‘q yoki u o‘chirilgan.\n'
-                            'Dehkon profilida: Settings → Telegram Business → Chatbots → bot → "Manage stories" ni yoqing. Yoqilgach avtomatik faollashadi.')
-            return
+            bind_business(actor,chat,tokens[1],tokens[2]); return
         if cmd=='/igmedia':
             slug=tokens[1] if len(tokens)>1 else 'dehkon-dorixona'
             from .publishers import ig_list_media
@@ -224,7 +210,35 @@ def add_brand(actor,chat,text):
         if db.get(Brand,slug): send(chat,'Bu nomdagi brend avval qo‘shilgan.');return
         db.add(Brand(slug=slug,name=name,ai_prompt=f'{name} brendining rasmiy sahifasi uchun o‘zbek lotinida tushunarli, qisqa, ishonchli kontent yoz. Tasdiqlanmagan narx yoki aksiya o‘ylab topma.',defaults=[]))
         db.add(Audit(actor=actor,action='brand_created',brand_slug=slug,details=name))
-    send(chat,f'✅ Yangi brend: {name}\nID: {slug}\n\nEndi /connectig {slug} orqali Instagram, /connectyoutube {slug} orqali YouTube ulang. /setdefaults bilan formatlarni tanlang. Xodimga /grant USER_ID {slug}.')
+    send(chat,f'✅ Yangi brend: {name}\n\nEndi akkauntlarni ulang — pastdagi tugmani bosing:',inline([
+        [('📸 Instagram ulash','admin:ig:'+slug),('▶️ YouTube ulash','admin:yt:'+slug)],
+        [('🧪 Reels→Trial sozlamalari','tr:panel:'+slug)],
+        [('🏪 Brend sozlamalari','admin:brand:'+slug)]]))
+
+
+def bind_business(actor,chat,account_id,slug):
+    with Session.begin() as db:
+        a=db.get(Account,account_id);b=db.get(Brand,slug)
+        if not a or a.platform!='telegram_business' or a.brand_slug is not None or not b:
+            send(chat,'ℹ️ Bu ulanish topilmadi yoki allaqachon biriktirilgan.');return
+        a.brand_slug=b.slug
+        ready=a.status in ('pending','active')
+        a.status='active' if ready else 'disabled'
+        for old in db.scalars(select(Account).where(Account.platform=='telegram_business',Account.handle==a.handle,
+                                                    Account.brand_slug==b.slug,Account.id!=a.id)):
+            old.status='replaced'
+        db.add(Audit(actor=actor,action='bindbiz',brand_slug=b.slug,details=a.external_id))
+        name=b.name
+    if ready: send(chat,f'✅ Telegram Business «{name}» brendiga biriktirildi. Telegram Story joylanadi.')
+    else: send(chat,'⚠️ Biriktirildi, lekin bu ulanishda Story ruxsati yo‘q yoki u o‘chirilgan.\n'
+                    'Profilda: Settings → Telegram Business → Chatbots → bot → "Manage stories" ni yoqing. Yoqilgach avtomatik faollashadi.')
+
+
+def biz_buttons(account_id):
+    """One button per brand to attach a Telegram Business connection (callback data stays < 64 bytes)."""
+    with Session() as db:
+        brands=db.scalars(select(Brand).order_by(Brand.slug)).all()
+    return inline([[(f'🔗 {b.name} ga biriktirish',f'biz:{account_id}:{i}')] for i,b in enumerate(brands)])
 
 
 def handle_callback(callback):
@@ -264,15 +278,18 @@ def admin_action(actor,chat,data):
                 acc=db.scalars(select(Account).where(Account.brand_slug==b.slug,Account.status!='replaced')).all()
                 lines.append(f'🏪 {b.name} ({b.slug})\n'+('\n'.join(f'  • {a.platform}: {a.handle} ({a.status})' for a in acc) or '  Hozircha akkaunt yo‘q'))
             pending=db.scalars(select(Account).where(Account.brand_slug.is_(None))).all()
-        if pending: lines.append('⏳ Biriktirilmagan:\n'+'\n'.join(f'  • {a.platform}: {a.handle} ({a.status}) — /bindbiz {a.id} brand-slug' for a in pending))
-        send(chat,'🔗 Akkauntlar\n\n'+'\n\n'.join(lines),inline([[(f'➕ {b.name}: ulash','admin:brand:'+b.slug)] for b in brands])); return
+        if pending: lines.append('⏳ Biriktirilmagan:\n'+'\n'.join(f'  • {a.platform}: {a.handle} ({a.status})' for a in pending))
+        send(chat,'🔗 Akkauntlar\n\n'+'\n\n'.join(lines),inline([[(f'➕ {b.name}: ulash','admin:brand:'+b.slug)] for b in brands]))
+        for a in pending:
+            send(chat,f'⏳ {a.platform}: {a.handle} — qaysi brendga biriktiramiz?',biz_buttons(a.id))
+        return
     if data=='kb:staff':
         with Session() as db:
             rows=db.scalars(select(Membership).order_by(Membership.brand_slug)).all()
             staff=[(m.brand_slug,m.telegram_id) for m in rows if m.can_publish]
         body='\n'.join(f'• {slug}: {uid}' for slug,uid in staff) or 'Hozircha xodim yo‘q.'
-        send(chat,f'👥 Xodimlar:\n{body}\n\n➕ Yangi xodim: botga /start bossin — sizga «✅ Brend» tugmalari keladi, bittasini bosasiz.\n'
-                  f'Bekor qilish: /revoke USER_ID brand-slug'); return
+        send(chat,f'👥 Xodimlar:\n{body}\n\n➕ Yangi xodim: botga /start bossin — sizga «✅ Brend» tugmalari keladi, bittasini bosasiz.',
+             inline([[(f'❌ {uid} — {slug}',f'revoke:{uid}:{slug}')] for slug,uid in staff]) if staff else None); return
     if data.startswith('grant:'):
         _,uid,slug=data.split(':',2)
         grant_member(actor,chat,int(uid),slug);return
@@ -300,11 +317,26 @@ def admin_action(actor,chat,data):
         send(chat,'📺 Qaysi brend?',inline([[(b.name,'rs:panel:'+b.slug)] for b in brands]));return
     if data.startswith('rs:'):
         reels_action(actor,chat,data);return
+    if data.startswith('biz:'):
+        _,aid,idx=data.split(':',2)
+        with Session() as db:
+            brands=db.scalars(select(Brand).order_by(Brand.slug)).all()
+        if not idx.isdigit() or int(idx)>=len(brands):send(chat,'Brend topilmadi');return
+        bind_business(actor,chat,aid,brands[int(idx)].slug);return
+    if data.startswith('revoke:'):
+        _,uid,slug=data.split(':',2)
+        with Session.begin() as db:
+            member=db.get(Membership,(int(uid),slug))
+            if member: db.delete(member)
+            db.add(Audit(actor=actor,action='revoke',brand_slug=slug,details=uid))
+        send(chat,f'✅ {uid} ning «{slug}» ga ruxsati bekor qilindi.')
+        try:send(int(uid),'ℹ️ Botdagi ruxsatingiz bekor qilindi.')
+        except Exception:pass
+        return
     if data=='kb:trial':
         with Session() as db:
-            brands=[b for b in db.scalars(select(Brand)) if db.scalars(select(Account).where(
-                Account.brand_slug==b.slug,Account.platform=='instagram',Account.status=='active')).first()]
-        if not brands:send(chat,'🧪 Hali birorta brendda Instagram ulanmagan.');return
+            brands=db.scalars(select(Brand)).all()
+        if not brands:send(chat,'🧪 Avval brend qo‘shing.',inline([[('➕ Brend qo‘shish','admin:addbrand')]]));return
         if len(brands)==1:trial_panel(chat,brands[0].slug);return
         send(chat,'🧪 Qaysi akkauntning Reels’larini Trial qilamiz?',inline([[(b.name,'tr:panel:'+b.slug)] for b in brands]));return
     if data.startswith('tr:'):
@@ -726,6 +758,11 @@ def trial_panel(chat,slug):
     with Session() as db:
         b=db.get(Brand,slug)
         if not b:send(chat,'Brend topilmadi');return
+        has_ig=db.scalars(select(Account).where(Account.brand_slug==slug,Account.platform=='instagram',
+                                                Account.status=='active')).first() is not None
+        if not has_ig:
+            send(chat,f'🧪 {b.name}: avval Instagram akkauntini ulang.\nTugmani bosing va o‘sha sahifaga kirgan holda ruxsat bering.',
+                 inline([[('📸 Instagram ulash','admin:ig:'+slug)],[('↩️ Orqaga','kb:trial')]]));return
         on=bool(b.trial_repost);paused=is_paused(b);until=aware(b.trial_repost_paused_until);slots=b.trial_repost_slots or ''
         nxt=next_run(b);name=b.name
     c=status_counts(slug);first=queue_preview(slug,1)
@@ -978,7 +1015,7 @@ def handle_business_connection(update):
     elif brand:
         notify_admins(f'✅ Telegram Business ulandi va {brand} brendiga biriktirildi ({handle}). Telegram Story joylanadi.')
     else:
-        notify_admins(f'🔔 Telegram Business ruxsatlandi: {handle}. Hisob ID: {aid}. Uni tanlangan brendga biriktiring: /bindbiz {aid} dehkon-dorixona')
+        notify_admins(f'🔔 Telegram Business ruxsatlandi: {handle}.\nQaysi brendga Story joylansin? Tugmani bosing:',biz_buttons(aid))
 
 HELP='''🤖 Content Manager AI — buyruqlar
 /menu — Super Admin panel
