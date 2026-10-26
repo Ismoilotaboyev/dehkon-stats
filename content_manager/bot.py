@@ -174,6 +174,22 @@ def handle_text(msg):
             else: send(chat,'⚠️ Brendga biriktirildi, lekin bu ulanishda Story ruxsati yo‘q yoki u o‘chirilgan.\n'
                             'Dehkon profilida: Settings → Telegram Business → Chatbots → bot → "Manage stories" ni yoqing. Yoqilgach avtomatik faollashadi.')
             return
+        if cmd=='/igmedia':
+            slug=tokens[1] if len(tokens)>1 else 'dehkon-dorixona'
+            from .publishers import ig_list_media
+            with Session() as db:
+                acc=db.scalars(select(Account).where(Account.brand_slug==slug,Account.platform=='instagram',Account.status=='active')).first()
+            if not acc: raise ValueError('Bu brendda faol Instagram akkaunt yo‘q')
+            items=ig_list_media(acc,50)
+            lines=[]
+            for i,m in enumerate(items,1):
+                cap=(m.get('caption') or '').replace('\n',' ')[:35]
+                feed=m.get('is_shared_to_feed')
+                lines.append(f"{i}. {m.get('timestamp','')[:10]} · {m.get('media_product_type','?')}/{m.get('media_type','?')}"
+                             f" · feed={'?' if feed is None else feed} · {cap}\n   {m.get('permalink','')}")
+            text='📋 Instagram API ko‘rsatgan oxirgi postlar ('+str(len(items))+' ta):\n\n'+'\n'.join(lines)
+            for i in range(0,len(text),3900): send(chat,text[i:i+3900])
+            return
         if cmd=='/help': send(chat,HELP); return
         send(chat,'Buyruqlar ro‘yxati uchun /help yoki /menu.');return
     except Exception as ex:

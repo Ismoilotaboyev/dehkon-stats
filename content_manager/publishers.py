@@ -123,6 +123,20 @@ def fetch_ig_metrics(account:Account,media_id:str):
     return out
 
 
+IG_LIST_FIELDS='id,caption,media_type,media_product_type,permalink,timestamp,is_shared_to_feed'
+
+
+def ig_list_media(account:Account,limit=50):
+    """The account's own media as the API returns it (newest first)."""
+    token=ig_token(account);host=ig_host()
+    for fields in (IG_LIST_FIELDS,IG_LIST_FIELDS.replace(',is_shared_to_feed','')):
+        try:
+            d=api_json(requests.get(f'{host}/me/media',params={'fields':fields,'limit':limit,'access_token':token},timeout=30))
+            return d.get('data',[])
+        except RuntimeError as exc:last=exc
+    raise last
+
+
 def ig_health(account:Account):
     """Raises if the Instagram token no longer works."""
     token=ig_token(account)
