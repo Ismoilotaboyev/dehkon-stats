@@ -37,6 +37,14 @@ def api_json(response):
 
 IG_BASE_REFRESH='https://graph.instagram.com/refresh_access_token'
 
+
+def trial_graduation_strategy():
+    """Meta accepts exactly MANUAL (graduate in the Instagram app) or SS_PERFORMANCE (auto-graduate if it performs well)."""
+    value=env('IG_TRIAL_GRADUATION','MANUAL').strip().upper()
+    if value not in ('MANUAL','SS_PERFORMANCE'):
+        raise ValueError('IG_TRIAL_GRADUATION must be MANUAL or SS_PERFORMANCE')
+    return value
+
 def ig_publish(account:Account,surface:str,video_key:str,caption:str):
     """Uses Instagram Login API (graph.instagram.com), not Facebook Login.
     Trial params must be tested against the specific app and account; disabled by default.
@@ -54,7 +62,7 @@ def ig_publish(account:Account,surface:str,video_key:str,caption:str):
     elif surface in ('instagram_reels','instagram_trial'):
         params.update({'media_type':'REELS','caption':caption[:2200]})
         if surface=='instagram_trial':
-            params['trial_params']=json.dumps({'graduation_strategy':'manual'})
+            params['trial_params']=json.dumps({'graduation_strategy':trial_graduation_strategy()})
     else:raise ValueError('Invalid Instagram surface')
     d=api_json(requests.post(f'{host}/{account.external_id}/media',data=params,timeout=60))
     container_id=d['id']

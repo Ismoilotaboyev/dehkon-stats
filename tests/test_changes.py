@@ -268,3 +268,34 @@ def test_ensure_webhook_sets_once(monkeypatch):
     assert state['url'] == 'https://x.up.railway.app/telegram/webhook' and state['logout'] == 1
     sw.ensure_webhook(attempts=1, delay=0)  # second start: already set, no logout, no set
     assert state['logout'] == 1 and state['calls'].count('setWebhook') == 1
+
+
+# ---------- Trial Reels request ----------
+
+def test_trial_reel_request_uses_meta_values(monkeypatch):
+    import json as _json
+    from content_manager import publishers
+    monkeypatch.setenv('IG_ENABLE_TRIAL', 'true')
+    monkeypatch.setattr(publishers, 'decrypt', lambda v: _json.dumps({'access_token': 'tok', 'expires_at': 0}))
+    monkeypatch.setattr(publishers, 'public_temporary_url', lambda key, expires=3600: 'https://s3/' + key)
+    sent = {}
+
+    class R:
+        def __init__(self, d): self.d = d; self.ok = True
+        def json(self): return self.d
+
+    def post(url, data=None, timeout=0):
+        if url.endswith('/media'):
+            sent.update(data); return R({'id': 'C1'})
+        return R({'id': 'P1'})
+    monkeypatch.setattr(publishers.requests, 'post', post)
+    monkeypatch.setattr(publishers.requests, 'get', lambda url, params=None, timeout=0: R({'status_code': 'FINISHED'}))
+    acc = Account(id='t', platform='instagram', external_id='IG', encrypted_credentials='x')
+    for env_value, expected in [(None, 'MANUAL'), ('ss_performance', 'SS_PERFORMANCE')]:
+        if env_value: monkeypatch.setenv('IG_TRIAL_GRADUATION', env_value)
+        assert publishers.ig_publish(acc, 'instagram_trial', 'k.mp4', 'cap') == 'P1'
+        assert sent['media_type'] == 'REELS' and 'share_to_feed' not in sent
+        assert _json.loads(sent['trial_params']) == {'graduation_strategy': expected}
+    monkeypatch.setenv('IG_TRIAL_GRADUATION', 'auto')
+    with pytest.raises(ValueError):
+        publishers.ig_publish(acc, 'instagram_trial', 'k.mp4', 'cap')
