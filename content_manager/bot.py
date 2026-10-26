@@ -252,10 +252,25 @@ def admin_action(actor,chat,data):
             acc=db.scalars(select(Account).where(Account.brand_slug==slug,Account.status!='replaced')).all()
             summary='\n'.join(f'• {a.platform}: {a.handle} ({a.status})' for a in acc) or 'Hozircha akkaunt yo‘q'
             formats=', '.join(b.defaults or []) or 'Belgilanmagan'
-        send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}',inline([
+            auto=bool(b.auto_publish)
+        mode=('🤖 Avtomatik: AI shubha qilmagan videolar tasdiqsiz joylanadi' if auto
+              else '🕵️ Har bir video Super Admin tasdig‘idan o‘tadi')
+        send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}\n\nJoylash: {mode}',inline([
             [('📸 Instagram ulash','admin:ig:'+slug),('▶️ YouTube ulash','admin:yt:'+slug)],
             [('🧠 AI uslubi','admin:prompt:'+slug),('⚙️ Formatlar','admin:formats:'+slug)],
+            [(('🤖 Avto-joylash: YOQIQ ✅' if auto else '🤖 Avto-joylash: O‘CHIQ ⬜️'),'admin:auto:'+slug)],
             [('↩️ Loyihalar','admin:brands')]])); return
+    if data.startswith('admin:auto:'):
+        slug=data.split(':',2)[2]
+        with Session.begin() as db:
+            b=db.get(Brand,slug)
+            if not b:send(chat,'Brend topilmadi');return
+            b.auto_publish=not b.auto_publish;state=b.auto_publish
+            db.add(Audit(actor=actor,action='auto_publish_on' if state else 'auto_publish_off',brand_slug=slug))
+        send(chat,('🤖 Avto-joylash yoqildi: AI shubha qilmagan videolar tasdiqsiz joylanadi, sizga hisobot keladi. '
+                   'AI shubha qilganlari baribir sizga tugmalar bilan keladi.') if state else
+                  '🕵️ Avto-joylash o‘chirildi: har bir video sizning tasdig‘ingizdan o‘tadi.')
+        admin_action(actor,chat,'admin:brand:'+slug);return
     if data.startswith(('admin:ig:','admin:yt:')):
         slug=data.split(':',2)[2]
         try:

@@ -458,3 +458,68 @@ def test_ai_flag_shows_warning_and_override(botmocks):
     assert 'vf1' in queued
     with Session() as db:
         assert db.scalars(select(Audit).where(Audit.action == 'approved_over_ai_flag')).first() is not None
+
+
+# ---------- auto-publish ----------
+
+@pytest.fixture
+def fastworker(monkeypatch):
+    calls = {'sent': [], 'videos': [], 'queued': []}
+    monkeypatch.setattr(worker, 'get_file', lambda fid, dest: Path(dest).write_bytes(b'x'))
+    monkeypatch.setattr(worker, 'media_info', lambda p: {'duration': 20.0, 'width': 1080, 'height': 1920})
+    monkeypatch.setattr(worker, 'convert', lambda src, out, **k: Path(out).write_bytes(b'v') and out)
+    monkeypatch.setattr(worker, 'upload_blob', lambda local, key: key)
+    monkeypatch.setattr(worker, 'send', lambda chat, text, markup=None: calls['sent'].append((chat, text, markup)))
+    monkeypatch.setattr(worker, 'send_video', lambda chat, path, caption='': calls['videos'].append(chat))
+    monkeypatch.setattr(bot, 'enqueue_publish', lambda vid: calls['queued'].append(vid))
+    with Session.begin() as db:
+        if not db.get(Brand, 'auto-brand'):
+            db.add(Brand(slug='auto-brand', name='Auto Brand', defaults=['instagram_story'], auto_publish=True))
+            db.add(Membership(telegram_id=888, brand_slug='auto-brand'))
+            db.add(Account(id='auto-ig', platform='instagram', external_id='IGA', brand_slug='auto-brand', handle='auto_ig'))
+    return calls
+
+
+def _ai(flag):
+    return lambda *a: {'hook': 'h', 'caption': 'Sarlavha! Gap.', 'youtube_title': 't', 'youtube_description': 'd',
+                       'flag': flag}
+
+
+def test_auto_publish_skips_approval(fastworker, monkeypatch):
+    monkeypatch.setattr(worker, 'make_ai_description', _ai(''))
+    with Session.begin() as db:
+        db.add(Video(id='au1', sender_id=888, message_id=3001, file_id='f', brand_slug='auto-brand', status='queued'))
+    worker.prepare_video('au1')
+    with Session() as db:
+        v = db.get(Video, 'au1')
+        assert v.status == 'approved' and v.approved_by == 0
+    assert fastworker['queued'] == ['au1']
+    admin_msgs = [(t, m) for c, t, m in fastworker['sent'] if c == 1]
+    assert admin_msgs and admin_msgs[-1][0].startswith('🤖 Avtomatik joylanmoqda') and admin_msgs[-1][1] is None
+    assert any(c == 888 and 'avtomatik joylanmoqda' in t for c, t, _ in fastworker['sent'])
+
+
+def test_auto_publish_still_asks_when_ai_flags(fastworker, monkeypatch):
+    monkeypatch.setattr(worker, 'make_ai_description', _ai('Tibbiy da’vo'))
+    with Session.begin() as db:
+        db.add(Video(id='au2', sender_id=888, message_id=3002, file_id='f', brand_slug='auto-brand', status='queued'))
+    worker.prepare_video('au2')
+    with Session() as db:
+        assert db.get(Video, 'au2').status == 'awaiting_approval'
+    assert 'au2' not in fastworker['queued']
+    flagged = [(t, m) for c, t, m in fastworker['sent'] if c == 1 and m]
+    assert flagged and flagged[-1][0].startswith('⚠️ AI OGOHLANTIRISHI')
+    assert flagged[-1][1]['inline_keyboard'][0][0]['text'] == '✅ Baribir joylash'
+
+
+def test_auto_toggle_button(botmocks):
+    sent, _, _ = botmocks
+    import content_manager.bot as b
+    with Session.begin() as db:
+        if not db.get(Brand, 'tog-brand'):
+            db.add(Brand(slug='tog-brand', name='Tog', defaults=[]))
+    b.admin_action(1, 1, 'admin:auto:tog-brand')
+    with Session() as db:
+        assert db.get(Brand, 'tog-brand').auto_publish is True
+    assert 'Avto-joylash yoqildi' in sent[-2][1]
+    assert 'YOQIQ' in str(sent[-1][2])

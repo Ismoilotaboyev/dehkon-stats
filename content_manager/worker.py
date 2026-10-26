@@ -287,10 +287,28 @@ def prepare_video(video_id):
                 v.status='awaiting_approval'
         except Exception as exc:
             fail(video_id,sender,'Video tayyorlashda xatolik: '+str(exc));raise
-        send_preview(video_id,standard)
+        # Auto-publish brands skip the approval step unless the AI flagged the video.
+        auto=bool(brand.auto_publish) and not captions.get('flag')
+        if auto:
+            with Session.begin() as db:
+                v=db.get(Video,video_id)
+                auto=v.status=='awaiting_approval'
+                if auto:
+                    v.status='approved';v.approved_by=0
+                    db.add(Audit(actor=0,action='auto_approved',brand_slug=stored['brand'],details=video_id))
+        if auto:
+            from .bot import enqueue_publish
+            enqueue_publish(video_id)
+            notice=preview_text(video_id).replace('🕵️ Tasdiqlash kerak','🤖 Avtomatik joylanmoqda (tasdiq shart emas)',1)
+            for admin in superadmins():
+                try:send(admin,notice)
+                except Exception:log.exception('Auto notice to %s failed',admin)
+        else:
+            send_preview(video_id,standard)
     if sender not in superadmins():
-        send(sender,'🕵️ Video tayyor va Super Admin tasdig‘iga yuborildi. Tasdiqlangach joylanadi.'
-             +('\n⚠️ AI ogohlantirish qoldirdi, qarorni Super Admin qiladi.' if captions.get('flag') else ''))
+        if auto: send(sender,'🎬 Video tayyor va avtomatik joylanmoqda. Hisobot keladi.')
+        else: send(sender,'🕵️ Video tayyor va Super Admin tasdig‘iga yuborildi. Tasdiqlangach joylanadi.'
+                   +('\n⚠️ AI ogohlantirish qoldirdi, qarorni Super Admin qiladi.' if captions.get('flag') else ''))
 
 
 def publish_video(video_id):

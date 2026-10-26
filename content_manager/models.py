@@ -21,6 +21,8 @@ class Brand(Base):
     ai_prompt: Mapped[str] = mapped_column(Text, default='')
     defaults: Mapped[list] = mapped_column(JSON, default=lambda: ['instagram_story','instagram_reels','youtube_shorts','telegram_business_story'])
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # True: videos AI did not flag are published without waiting for a Super Admin.
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Membership(Base):
