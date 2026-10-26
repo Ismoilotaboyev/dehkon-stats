@@ -357,3 +357,53 @@ def test_admin_buttons_work_and_cancel_pending(botmocks):
     n = len(sent)
     bot.handle_text({'from': {'id': 4242}, 'chat': {'id': 4242, 'type': 'private'}, 'text': '📊 Hisobot'})
     assert '📊' not in sent[-1][1] and len(sent) == n + 1
+
+
+# ---------- Telegram Business reconnect ----------
+
+def _biz(conn, owner=9001, enabled=True, stories=True):
+    return {'business_connection': {'id': conn, 'user': {'id': owner}, 'is_enabled': enabled,
+                                    'rights': {'can_manage_stories': stories}}}
+
+
+def test_business_reconnect_keeps_brand(botmocks, monkeypatch):
+    sent, _, _ = botmocks
+    notes = []
+    monkeypatch.setattr(bot, 'notify_admins', lambda text, markup=None: notes.append(text))
+    with Session.begin() as db:
+        if not db.get(Brand, 'biz-brand'):
+            db.add(Brand(slug='biz-brand', name='Biz Brand', defaults=['telegram_business_story']))
+    bot.handle_business_connection(_biz('C1'))
+    with Session() as db:
+        a1 = db.scalars(select(Account).where(Account.external_id == 'C1')).one()
+        assert a1.brand_slug is None and a1.status == 'pending'
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': f'/bindbiz {a1.id} biz-brand'})
+    assert 'Telegram Story joylanadi' in sent[-1][1]
+    # owner reconnects: old connection disabled, new id arrives
+    bot.handle_business_connection(_biz('C1', enabled=False))
+    bot.handle_business_connection(_biz('C2'))
+    with Session() as db:
+        rows = {a.external_id: (a.brand_slug, a.status) for a in db.scalars(select(Account).where(Account.handle == 'Business user 9001'))}
+    assert rows == {'C1': ('biz-brand', 'replaced'), 'C2': ('biz-brand', 'active')}
+    assert 'biriktirildi' in notes[-1]
+    # rights removed -> disabled + explicit warning; restored -> active again
+    bot.handle_business_connection(_biz('C2', stories=False))
+    assert 'Story ruxsati berilmagan' in notes[-1]
+    bot.handle_business_connection(_biz('C2'))
+    with Session() as db:
+        assert db.scalars(select(Account).where(Account.external_id == 'C2')).one().status == 'active'
+
+
+def test_bindbiz_without_story_rights_stays_off(botmocks, monkeypatch):
+    sent, _, _ = botmocks
+    monkeypatch.setattr(bot, 'notify_admins', lambda text, markup=None: None)
+    with Session.begin() as db:
+        if not db.get(Brand, 'biz-brand2'):
+            db.add(Brand(slug='biz-brand2', name='Biz Brand 2', defaults=[]))
+    bot.handle_business_connection(_biz('D1', owner=9002, stories=False))
+    with Session() as db:
+        aid = db.scalars(select(Account).where(Account.external_id == 'D1')).one().id
+    bot.handle_text({'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': f'/bindbiz {aid} biz-brand2'})
+    assert 'Story ruxsati yo‘q' in sent[-1][1]
+    with Session() as db:
+        assert db.get(Account, aid).status == 'disabled'

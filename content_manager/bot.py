@@ -163,9 +163,18 @@ def handle_text(msg):
             with Session.begin() as db:
                 a=db.get(Account,tokens[1]);b=db.get(Brand,tokens[2])
                 if not a or a.platform!='telegram_business' or a.brand_slug is not None or not b:raise ValueError('Akkaunt yoki brend topilmadi / oldin biriktirilgan')
-                a.brand_slug=b.slug;a.status='active'
+                a.brand_slug=b.slug
+                # 'pending' = enabled with Story rights; 'disabled' = no rights / switched off: keep it off.
+                ready=a.status in ('pending','active')
+                a.status='active' if ready else 'disabled'
+                for old in db.scalars(select(Account).where(Account.platform=='telegram_business',Account.handle==a.handle,
+                                                            Account.brand_slug==b.slug,Account.id!=a.id)):
+                    old.status='replaced'
                 db.add(Audit(actor=actor,action='bindbiz',brand_slug=b.slug,details=a.external_id))
-            send(chat,'✅ Telegram Business brendga biriktirildi.'); return
+            if ready: send(chat,'✅ Telegram Business brendga biriktirildi. Telegram Story joylanadi.')
+            else: send(chat,'⚠️ Brendga biriktirildi, lekin bu ulanishda Story ruxsati yo‘q yoki u o‘chirilgan.\n'
+                            'Dehkon profilida: Settings → Telegram Business → Chatbots → bot → "Manage stories" ni yoqing. Yoqilgach avtomatik faollashadi.')
+            return
         if cmd=='/help': send(chat,HELP); return
         send(chat,'Buyruqlar ro‘yxati uchun /help yoki /menu.');return
     except Exception as ex:
@@ -212,10 +221,10 @@ def admin_action(actor,chat,data):
             brands=db.scalars(select(Brand)).all()
             lines=[]
             for b in brands:
-                acc=db.scalars(select(Account).where(Account.brand_slug==b.slug)).all()
+                acc=db.scalars(select(Account).where(Account.brand_slug==b.slug,Account.status!='replaced')).all()
                 lines.append(f'🏪 {b.name} ({b.slug})\n'+('\n'.join(f'  • {a.platform}: {a.handle} ({a.status})' for a in acc) or '  Hozircha akkaunt yo‘q'))
             pending=db.scalars(select(Account).where(Account.brand_slug.is_(None))).all()
-        if pending: lines.append('⏳ Biriktirilmagan:\n'+'\n'.join(f'  • {a.platform}: {a.handle} — /bindbiz {a.id} brand-slug' for a in pending))
+        if pending: lines.append('⏳ Biriktirilmagan:\n'+'\n'.join(f'  • {a.platform}: {a.handle} ({a.status}) — /bindbiz {a.id} brand-slug' for a in pending))
         send(chat,'🔗 Akkauntlar\n\n'+'\n\n'.join(lines),inline([[(f'➕ {b.name}: ulash','admin:brand:'+b.slug)] for b in brands])); return
     if data=='kb:staff':
         with Session() as db:
@@ -240,7 +249,7 @@ def admin_action(actor,chat,data):
         with Session() as db:
             b=db.get(Brand,slug)
             if not b:send(chat,'Brend topilmadi');return
-            acc=db.scalars(select(Account).where(Account.brand_slug==slug)).all()
+            acc=db.scalars(select(Account).where(Account.brand_slug==slug,Account.status!='replaced')).all()
             summary='\n'.join(f'• {a.platform}: {a.handle} ({a.status})' for a in acc) or 'Hozircha akkaunt yo‘q'
             formats=', '.join(b.defaults or []) or 'Belgilanmagan'
         send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}',inline([
@@ -386,23 +395,47 @@ def edit_caption(actor,chat,video_id,text):
 
 
 def handle_business_connection(update):
+    """Telegram Business owner connected / changed / disconnected the bot.
+    A reconnection arrives with a NEW connection id; if the same Business owner was already bound
+    to a brand by a Super Admin, the new connection takes over that brand and the old one is 'replaced'.
+    Stories are only posted while the connection is enabled AND has can_manage_stories."""
     info=update['business_connection']
     owner=info.get('user',{}).get('id')
-    account_id=info.get('id')
-    if not account_id:return
-    can_stories=info.get('rights',{}).get('can_manage_stories',False)
+    conn_id=info.get('id')
+    if not conn_id:return
+    enabled=bool(info.get('is_enabled'))
+    can_stories=bool((info.get('rights') or {}).get('can_manage_stories',False))
+    handle=f'Business user {owner}'
+    status='active' if enabled and can_stories else 'disabled'
     with Session.begin() as db:
-        existing=db.scalars(select(Account).where(Account.platform=='telegram_business',Account.external_id==account_id)).first()
-        if existing:
-            existing.status='active' if info.get('is_enabled') and can_stories else 'disabled'
-            existing.handle=f'Business user {owner}'
-        elif info.get('is_enabled'):
-            db.add(Account(platform='telegram_business',external_id=account_id,handle=f'Business user {owner}',brand_slug=None,status='pending' if can_stories else 'disabled'))
-    if info.get('is_enabled') and can_stories and not existing:
-        # Never auto-link a connection to a brand. Super Admin must make an explicit choice.
-        with Session() as db:
-            a=db.scalars(select(Account).where(Account.platform=='telegram_business',Account.external_id==account_id)).first()
-            if a:notify_admins(f'🔔 Telegram Business ruxsatlandi: {a.handle}. Hisob ID: {a.id}. Uni tanlangan brendga biriktiring: /bindbiz {a.id} dehkon-dorixona')
+        acc=db.scalars(select(Account).where(Account.platform=='telegram_business',Account.external_id==conn_id)).first()
+        if not acc:
+            if not enabled:return
+            # Unbound + ready = 'pending' (waits for /bindbiz); unbound without rights = 'disabled'.
+            acc=Account(platform='telegram_business',external_id=conn_id,handle=handle,brand_slug=None,
+                        status='pending' if status=='active' else status)
+            db.add(acc)
+            prev=db.scalars(select(Account).where(Account.platform=='telegram_business',Account.handle==handle,
+                                                  Account.brand_slug.is_not(None),Account.external_id!=conn_id)).all()
+            if prev:
+                acc.brand_slug=prev[0].brand_slug;acc.status=status
+                for old in prev: old.status='replaced'
+                db.add(Audit(actor=owner or 0,action='bindbiz_auto',brand_slug=acc.brand_slug,details=conn_id))
+        else:
+            acc.handle=handle
+            if acc.status=='replaced':return
+            acc.status=status if (acc.brand_slug or status!='active') else 'pending'
+        db.flush()
+        aid,brand=acc.id,acc.brand_slug
+    if not enabled:
+        notify_admins(f'⚠️ Telegram Business ulanishi o‘chirildi: {handle}. Telegram Story joylanmaydi.')
+    elif not can_stories:
+        notify_admins(f'⚠️ Telegram Business ulandi ({handle}), lekin Story ruxsati berilmagan.\n'
+                      'Dehkon profilida: Settings → Telegram Business → Chatbots → bot → ruxsatlarda "Manage stories" ni yoqing.')
+    elif brand:
+        notify_admins(f'✅ Telegram Business ulandi va {brand} brendiga biriktirildi ({handle}). Telegram Story joylanadi.')
+    else:
+        notify_admins(f'🔔 Telegram Business ruxsatlandi: {handle}. Hisob ID: {aid}. Uni tanlangan brendga biriktiring: /bindbiz {aid} dehkon-dorixona')
 
 HELP='''🤖 Content Manager AI — buyruqlar
 /menu — Super Admin panel
