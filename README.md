@@ -75,6 +75,18 @@ Python 3.12 + FastAPI, PostgreSQL, Redis/RQ, Railway S3 bucket, OpenAI Speech-to
 
 Bir xodimga ikkala brendni bersangiz, video yuborilganda brend tanlash tugmalari paydo bo‘ladi. Hech qaysi xodim Super Admin tasdig‘isiz yangi akkaunt ulay olmaydi.
 
+## Qo‘shimcha imkoniyatlar
+
+- **Trial Reels statistikasi:** Trial/Reels/post/Shorts joylangach 24 va 72 soatda ko‘rish, qamrov, like, izoh, saqlash, ulashish olinadi. Trial Reels uchun Super Admin’ga “🔥 yaxshi ketyapti — ilovada obunachilarga ulashing” yoki “📉 o‘rtacha” xabari keladi (brendning oldingi triallari bilan taqqoslanadi; `TRIAL_GOOD_MIN_VIEWS`, default 500). Instagram uchun `instagram_business_manage_insights` ruxsati kerak: o‘rnatilgandan keyin `/connectig brand-slug` ni bir marta qayta bosing.
+- **🔁 Qayta urinish:** xato bergan nashrlar hisobotda tugma bilan keladi; Story’ning keyingi qismlari ham qayta navbatga qo‘yiladi.
+- **Xodim qo‘shish:** yangi odam /start bosadi → Super Admin’ga “✅ Brend / ⛔ Rad etish” tugmalari keladi.
+- **Rejalashtirish:** brend kartasida “⏰ Joylash vaqtlari” (masalan `09:00, 13:00, 19:00`, Toshkent vaqti). Avto-joylash yoqiq bo‘lsa, videolar navbatdagi bo‘sh vaqtga qo‘yiladi. Preview’da “⏰ Vaqtini tanlash” tugmasi.
+- **Rasm:** xodim rasm yuborsa — Instagram Story, Instagram post (Reels/Trial o‘rniga) va Telegram Story; YouTube o‘tkazib yuboriladi. Rasm kesilmaydi, xira fon bilan to‘ldiriladi.
+- **Post turlari:** brend kartasida “🗂 Post turlari”. Xodim video yuborganda turini tanlaydi, AI shu tur qoidasi bo‘yicha yozadi. 10 daqiqada tanlanmasa, turisiz davom etadi.
+- **Haftalik hisobot:** har dushanba 09:00 (va istalgan vaqtda “📊 Hisobot” tugmasi).
+- **Ulanishlarni tekshirish:** har kuni 10:00; Instagram/YouTube tokeni ishlamasa yoki Telegram Business o‘chsa, ogohlantirish keladi.
+- Fon vazifalari `content-api` ichidagi rejalashtiruvchida ishlaydi (`SCHEDULER_ENABLED=false` bilan o‘chiriladi), og‘ir ish worker’da.
+
 ## Video tasdiqlash oqimi
 
 1. Xodim video yuboradi → worker uni yuklab oladi, formatlaydi, AI matn yozadi, Story qismlarini tayyorlaydi (S3 ga). Hech narsa joylanmaydi.

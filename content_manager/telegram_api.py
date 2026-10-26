@@ -28,6 +28,12 @@ def send_video(chat_id, path, caption=''):
                         files={'video': ('preview.mp4', f, 'video/mp4')}, timeout=900)
 
 
+def send_photo(chat_id, path, caption=''):
+    with open(path, 'rb') as f:
+        return telegram('sendPhoto', {'chat_id': chat_id, 'caption': caption[:1024]},
+                        files={'photo': ('preview.jpg', f, 'image/jpeg')}, timeout=300)
+
+
 def inline(rows):
     return {'inline_keyboard': [[{'text': label, 'callback_data': data} for label, data in row] for row in rows]}
 

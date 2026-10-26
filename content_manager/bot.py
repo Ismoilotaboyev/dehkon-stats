@@ -3,6 +3,8 @@ import json
 import secrets
 from sqlalchemy import select
 from .models import Session, Brand, Membership, Account, Video, Audit, Publication
+from .timeutil import parse_slots, quick_choices, label as tlabel, aware, now_utc
+from datetime import datetime, timezone
 from .config import superadmins, env
 from .telegram_api import send, inline, telegram, notify_admins
 from .auth import start_auth
@@ -90,8 +92,8 @@ def handle_text(msg):
             with Session() as db: brands=permitted_brands(db,actor)
             if brands: send(chat,'✅ Sizga ruxsat berilgan brendlar: '+', '.join(b.name for b in brands)+'. Video yuboring.',staff_keyboard())
             else:
-                send(chat,f'⛔ Sizga ruxsat berilmagan. Admin uchun Telegram ID: {actor}')
-                notify_admins(f'🔔 Content Manager AI: yangi foydalanuvchi ruxsat so‘rayapti. ID: {actor}. /grant {actor} dehkon-dorixona')
+                send(chat,'⏳ So‘rovingiz Super Admin’ga yuborildi. Ruxsat berilgach shu yerga xabar keladi.')
+                request_access(msg['from'])
         return
     if actor not in superadmins():
         with Session() as db:
@@ -104,6 +106,10 @@ def handle_text(msg):
     if state=='addbrand' and not raw.startswith('/'):
         rclient().delete(f'pending:{actor}')
         add_brand(actor,chat,raw); return
+    if state and state.startswith('setslots:') and not raw.startswith('/'):
+        set_slots(actor,chat,state.split(':',1)[1],raw); return
+    if state and state.startswith('tpladd:') and not raw.startswith('/'):
+        add_template(actor,chat,state.split(':',1)[1],raw); return
     if state and state.startswith('setprompt:') and not raw.startswith('/'):
         slug=state.split(':',1)[1]
         if len(raw)>4000: send(chat,'⚠️ 4000 belgidan oshmasin.'); return
@@ -124,14 +130,7 @@ def handle_text(msg):
                 send(chat,'🏪 Brendlar:\n'+'\n'.join(f'• {b.name} — `{b.slug}`' for b in data)); return
         if cmd=='/grant':
             if len(tokens)!=3: raise ValueError('Sintaksis: /grant USER_ID brand-slug')
-            user_id=int(tokens[1]);slug=tokens[2]
-            with Session.begin() as db:
-                if not db.get(Brand,slug): raise ValueError('Brend topilmadi')
-                mem=db.get(Membership,(user_id,slug))
-                if mem: mem.can_publish=True
-                else: db.add(Membership(telegram_id=user_id,brand_slug=slug,can_publish=True))
-                db.add(Audit(actor=actor,action='grant',brand_slug=slug,details=str(user_id)))
-            send(chat,f'✅ {user_id} ga {slug} huquqi berildi.'); send(user_id,'✅ Sizga '+slug+' brendiga video joylash huquqi berildi.'); return
+            grant_member(actor,chat,int(tokens[1]),tokens[2]); return
         if cmd=='/revoke':
             if len(tokens)!=3: raise ValueError('Sintaksis: /revoke USER_ID brand-slug')
             with Session.begin() as db:
@@ -203,9 +202,14 @@ def handle_callback(callback):
             allowed={b.slug for b in permitted_brands(db,actor)}
             if not v or v.sender_id!=actor or v.brand_slug or slug not in allowed:
                 send(chat,'⛔ Video yoki ruxsat noto‘g‘ri.');return
-            v.brand_slug=slug;v.status='queued'
+            v.brand_slug=slug;brand=db.get(Brand,slug);has_types=bool(brand.templates)
+            v.status='awaiting_type' if has_types else 'queued'
+        if has_types: ask_post_type(chat,video_id,slug);return
         enqueue_video(video_id)
-        send(chat,'✅ Video '+slug+' uchun qabul qilindi. AI tahlildan so‘ng Super Admin tasdiqlagach nashr qilinadi.');return
+        send(chat,'✅ '+slug+' uchun qabul qilindi. AI tahlildan so‘ng joylanadi.');return
+    if data.startswith('ptype:'):
+        _,video_id,key=data.split(':',2)
+        choose_post_type(actor,chat,video_id,'' if key=='-' else key);return
     if actor not in superadmins(): send(chat,'⛔ Faqat Super Admin.');return
     admin_action(actor,chat,data)
 
@@ -231,7 +235,39 @@ def admin_action(actor,chat,data):
             rows=db.scalars(select(Membership).order_by(Membership.brand_slug)).all()
             staff=[(m.brand_slug,m.telegram_id) for m in rows if m.can_publish]
         body='\n'.join(f'• {slug}: {uid}' for slug,uid in staff) or 'Hozircha xodim yo‘q.'
-        send(chat,f'👥 Xodimlar:\n{body}\n\nRuxsat berish: /grant USER_ID dehkon-dorixona\nBekor qilish: /revoke USER_ID dehkon-dorixona\nXodim ID sini bilmasa, botga /start yozsin — ID sizga keladi.'); return
+        send(chat,f'👥 Xodimlar:\n{body}\n\n➕ Yangi xodim: botga /start bossin — sizga «✅ Brend» tugmalari keladi, bittasini bosasiz.\n'
+                  f'Bekor qilish: /revoke USER_ID brand-slug'); return
+    if data.startswith('grant:'):
+        _,uid,slug=data.split(':',2)
+        grant_member(actor,chat,int(uid),slug);return
+    if data.startswith('deny:'):
+        uid=int(data.split(':',1)[1])
+        with Session.begin() as db:db.add(Audit(actor=actor,action='join_denied',details=str(uid)))
+        send(chat,f'⛔ {uid} so‘rovi rad etildi.')
+        try:send(uid,'⛔ Ruxsat so‘rovingiz rad etildi.')
+        except Exception:pass
+        return
+    if data.startswith('retry:'):
+        retry_publication(actor,chat,data.split(':',1)[1]);return
+    if data.startswith('admin:slots:'):
+        slug=data.split(':',2)[2]
+        rclient().setex(f'pending:{actor}',600,'setslots:'+slug)
+        send(chat,'⏰ Joylash vaqtlarini yuboring (Toshkent vaqti), masalan:\n09:00, 13:00, 19:00\n\n'
+                  'Shunda avtomatik joylanadigan videolar navbatdagi bo‘sh vaqtga qo‘yiladi (bir vaqtga bitta video).\n'
+                  'Darhol joylash uchun: yo‘q');return
+    if data.startswith('admin:tpl:'):
+        show_templates(chat,data.split(':',2)[2]);return
+    if data.startswith('admin:tpladd:'):
+        slug=data.split(':',2)[2]
+        rclient().setex(f'pending:{actor}',600,'tpladd:'+slug)
+        send(chat,'🗂 Yangi post turini shu ko‘rinishda yuboring:\nNomi | AI uchun qoida\n\n'
+                  'Masalan:\n🎁 Bayram | Bayram tabrigi ohangida, aksiya bo‘lsa faqat videodagi shartlarni yoz.');return
+    if data.startswith('admin:tpldel:'):
+        _,_,slug,key=data.split(':',3)
+        with Session.begin() as db:
+            b=db.get(Brand,slug)
+            if b:b.templates=[t for t in (b.templates or []) if t.get('key')!=key]
+        show_templates(chat,slug);return
     if data.startswith('appr:'):
         parts=data.split(':',2)
         if len(parts)==3: handle_approval(actor,chat,parts[1],parts[2])
@@ -252,13 +288,15 @@ def admin_action(actor,chat,data):
             acc=db.scalars(select(Account).where(Account.brand_slug==slug,Account.status!='replaced')).all()
             summary='\n'.join(f'• {a.platform}: {a.handle} ({a.status})' for a in acc) or 'Hozircha akkaunt yo‘q'
             formats=', '.join(b.defaults or []) or 'Belgilanmagan'
-            auto=bool(b.auto_publish)
+            auto=bool(b.auto_publish);slots=b.publish_slots or '';ntpl=len(b.templates or [])
         mode=('🤖 Avtomatik: AI shubha qilmagan videolar tasdiqsiz joylanadi' if auto
               else '🕵️ Har bir video Super Admin tasdig‘idan o‘tadi')
-        send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}\n\nJoylash: {mode}',inline([
+        send(chat,f'🏪 {b.name}\n\nAkkauntlar:\n{summary}\n\nFormatlar: {formats}\n\nJoylash: {mode}\n'
+                  f'Vaqtlar: {slots or "darhol"} · Post turlari: {ntpl} ta',inline([
             [('📸 Instagram ulash','admin:ig:'+slug),('▶️ YouTube ulash','admin:yt:'+slug)],
             [('🧠 AI uslubi','admin:prompt:'+slug),('⚙️ Formatlar','admin:formats:'+slug)],
             [(('🤖 Avto-joylash: YOQIQ ✅' if auto else '🤖 Avto-joylash: O‘CHIQ ⬜️'),'admin:auto:'+slug)],
+            [('⏰ Joylash vaqtlari','admin:slots:'+slug),('🗂 Post turlari','admin:tpl:'+slug)],
             [('↩️ Loyihalar','admin:brands')]])); return
     if data.startswith('admin:auto:'):
         slug=data.split(':',2)[2]
@@ -304,10 +342,8 @@ def admin_action(actor,chat,data):
         send_formats(chat,slug);return
     if data=='admin:staff':admin_action(actor,chat,'kb:staff');return
     if data=='admin:report':
-        from .models import Publication
-        with Session() as db:
-            n=db.query(Video).count();p=db.query(Publication).count();success=db.query(Publication).filter(Publication.status=='published').count()
-        send(chat,f'📊 {n} video, {p} nashr vazifasi, {success} muvaffaqiyatli.');return
+        from .insights import report_text
+        send(chat,report_text(7));return
 
 
 def send_formats(chat,slug):
@@ -321,28 +357,65 @@ def send_formats(chat,slug):
     send(chat,f'⚙️ {slug}: kerakli nashr formatini yoqing yoki o‘chiring.',inline(rows))
 
 
+IMAGE_EXT=('.jpg','.jpeg','.png','.webp')
+VIDEO_EXT=('.mp4','.mov','.webm','.m4v')
+
+
+def incoming_media(msg):
+    """(file, kind) for a video / photo / video-or-image document, else (None, None)."""
+    if msg.get('video'):return msg['video'],'video'
+    if msg.get('photo'):return msg['photo'][-1],'photo'   # largest size
+    doc=msg.get('document')
+    if doc:
+        mt=doc.get('mime_type','');fn=doc.get('file_name','').lower()
+        if mt.startswith('video/') or fn.endswith(VIDEO_EXT):return doc,'video'
+        if mt in ('image/jpeg','image/png','image/webp') or fn.endswith(IMAGE_EXT):return doc,'photo'
+    return None,None
+
+
 def handle_video(msg):
     actor=msg['from']['id'];chat=msg['chat']['id']
     if msg['chat']['type']!='private':return
-    f=msg.get('video') or msg.get('document')
+    f,kind=incoming_media(msg)
     if not f:return
-    if msg.get('document'):
-        media_type=f.get('mime_type','')
-        filename=f.get('file_name','').lower()
-        if not (media_type.startswith('video/') or filename.endswith(('.mp4','.mov','.webm','.m4v'))):return
+    who=msg['from'];name=' '.join(x for x in (who.get('first_name'),who.get('last_name')) if x) or who.get('username','')
     with Session.begin() as db:
         brands=permitted_brands(db,actor)
         if not brands: send(chat,'⛔ Sizga video yuklash huquqi berilmagan.');return
         old=db.query(Video).filter(Video.sender_id==actor,Video.message_id==msg['message_id']).first()
         if old: return
-        v=Video(sender_id=actor,message_id=msg['message_id'],file_id=f['file_id'],file_size=f.get('file_size',0), description=msg.get('caption',''))
-        if len(brands)==1: v.brand_slug=brands[0].slug;v.status='queued'
+        v=Video(sender_id=actor,message_id=msg['message_id'],file_id=f['file_id'],file_size=f.get('file_size',0),
+                description=msg.get('caption',''),media_kind=kind,sender_name=name[:200])
+        has_types=False
+        if len(brands)==1:
+            v.brand_slug=brands[0].slug;has_types=bool(brands[0].templates)
+            v.status='awaiting_type' if has_types else 'queued'
         db.add(v);db.flush(); video_id=v.id
+    what='Rasm' if kind=='photo' else 'Video'
     if len(brands)==1:
+        if has_types: ask_post_type(chat,video_id,brands[0].slug);return
         enqueue_video(video_id)
-        send(chat,f'🎬 Video qabul qilindi: {brands[0].name}. AI tahlildan so‘ng Super Admin tasdiqlagach ruxsat berilgan formatlarga nashr qilinadi.');return
+        send(chat,f'🎬 {what} qabul qilindi: {brands[0].name}. AI tahlildan so‘ng joylanadi.');return
     rows=[[(b.name,f'pick:{video_id}:{b.slug}')] for b in brands]
-    send(chat,'Ushbu videoni qaysi brendga joylaymiz?',inline(rows))
+    send(chat,f'Ushbu {what.lower()}ni qaysi brendga joylaymiz?',inline(rows))
+
+
+def ask_post_type(chat,video_id,slug):
+    with Session() as db:
+        b=db.get(Brand,slug);items=list(b.templates or []) if b else []
+    rows=[[(t['name'][:40],f'ptype:{video_id}:{t["key"]}')] for t in items]
+    rows.append([('⏭ Turini tanlamasdan','ptype:'+video_id+':-')])
+    send(chat,'🗂 Post turini tanlang (AI shu turga mos yozadi):',inline(rows))
+
+
+def choose_post_type(actor,chat,video_id,key):
+    with Session.begin() as db:
+        v=db.get(Video,video_id)
+        if not v or v.sender_id!=actor or v.status!='awaiting_type':
+            send(chat,'ℹ️ Bu video allaqachon qabul qilingan.');return
+        v.post_type=key;v.status='queued'
+    enqueue_video(video_id)
+    send(chat,'✅ Qabul qilindi. AI tahlildan so‘ng joylanadi.')
 
 
 def media_queue():
@@ -355,12 +428,133 @@ def enqueue_video(video_id):
     media_queue().enqueue('content_manager.worker.prepare_video',video_id, job_timeout=3600, result_ttl=86400, failure_ttl=604800,job_id=f'video-{video_id}')
 
 
-def enqueue_publish(video_id):
-    media_queue().enqueue('content_manager.worker.publish_video',video_id, job_timeout=3600, result_ttl=86400, failure_ttl=604800,job_id=f'publish-{video_id}')
+def enqueue_publish(video_id,suffix=''):
+    media_queue().enqueue('content_manager.worker.publish_video',video_id, job_timeout=3600, result_ttl=86400, failure_ttl=604800,job_id=f'publish-{video_id}{suffix}')
+
+
+def request_access(user):
+    """New person pressed /start: Super Admins get one-tap buttons (once per hour per person)."""
+    uid=user['id']
+    try:
+        if not rclient().set(f'joinreq:{uid}','1',ex=3600,nx=True):return
+    except Exception:pass
+    name=' '.join(x for x in (user.get('first_name'),user.get('last_name')) if x) or 'Nomsiz'
+    uname=f" @{user['username']}" if user.get('username') else ''
+    with Session() as db:brands=db.scalars(select(Brand).where(Brand.enabled==True)).all()
+    rows=[[(f'✅ {b.name}',f'grant:{uid}:{b.slug}')] for b in brands]+[[('⛔ Rad etish',f'deny:{uid}')]]
+    notify_admins(f'🔔 Yangi xodim ruxsat so‘rayapti:\n👤 {name}{uname}\nID: {uid}\n\nQaysi brendga ruxsat beramiz?',inline(rows))
+
+
+def grant_member(actor,chat,user_id,slug):
+    with Session.begin() as db:
+        b=db.get(Brand,slug)
+        if not b: send(chat,'Brend topilmadi');return
+        mem=db.get(Membership,(user_id,slug))
+        if mem: mem.can_publish=True
+        else: db.add(Membership(telegram_id=user_id,brand_slug=slug,can_publish=True))
+        db.add(Audit(actor=actor,action='grant',brand_slug=slug,details=str(user_id)))
+        bname=b.name
+    send(chat,f'✅ {user_id} ga {bname} huquqi berildi.')
+    try:send(user_id,f'✅ Sizga {bname} brendiga video va rasm joylash huquqi berildi. Shu chatga yuboring.',staff_keyboard())
+    except Exception:pass
+
+
+def retry_publication(actor,chat,pub_id):
+    with Session.begin() as db:
+        p=db.get(Publication,pub_id)
+        if not p or p.status!='needs_review':
+            send(chat,'ℹ️ Bu nashr allaqachon qayta yuborilgan yoki holati o‘zgargan.');return
+        p.status='queued';p.details=''
+        for q in db.scalars(select(Publication).where(Publication.video_id==p.video_id,Publication.account_id==p.account_id,
+                                                      Publication.surface==p.surface,Publication.part>p.part,
+                                                      Publication.status=='skipped',Publication.details=='Oldingi qism joylanmadi')):
+            q.status='queued';q.details=''
+        v=db.get(Video,p.video_id);v.status='approved'
+        db.add(Audit(actor=actor,action='retry',brand_slug=v.brand_slug,details=pub_id))
+        vid=v.id
+    enqueue_publish(vid,f'-r{int(now_utc().timestamp())}')
+    send(chat,'🔁 Qayta yuborildi. Natija hisobotda keladi.')
+
+
+def set_slots(actor,chat,slug,raw):
+    text=raw.strip().lower()
+    try:slots=[] if text in ('yo‘q',"yo'q",'yoq','no','-','0') else parse_slots(raw)
+    except ValueError as exc:send(chat,'⚠️ '+str(exc));return
+    with Session.begin() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        b.publish_slots=', '.join(slots)
+        db.add(Audit(actor=actor,action='slots',brand_slug=slug,details=b.publish_slots))
+    rclient().delete(f'pending:{actor}')
+    send(chat,('⏰ Joylash vaqtlari: '+', '.join(slots)) if slots else '⏰ Vaqtlar o‘chirildi: videolar darhol joylanadi.')
+
+
+def show_templates(chat,slug):
+    with Session() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        items=list(b.templates or [])
+    body='\n\n'.join(f'{t["name"]}\n   {t.get("prompt","")[:200]}' for t in items) or 'Hozircha post turi yo‘q.'
+    rows=[[(f'🗑 {t["name"][:30]}',f'admin:tpldel:{slug}:{t["key"]}')] for t in items]
+    rows.append([('➕ Qo‘shish','admin:tpladd:'+slug),('↩️ Brendga qaytish','admin:brand:'+slug)])
+    send(chat,f'🗂 Post turlari ({slug})\nXodim video yuborganda shulardan birini tanlaydi:\n\n{body}',inline(rows))
+
+
+def add_template(actor,chat,slug,raw):
+    name,sep,prompt=raw.partition('|')
+    name=name.strip()[:40];prompt=prompt.strip()[:1000]
+    if not sep or not name or not prompt:send(chat,'⚠️ Ko‘rinishi: Nomi | AI uchun qoida');return
+    key=(slugify(name) or 'tur')[:12]
+    with Session.begin() as db:
+        b=db.get(Brand,slug)
+        if not b:send(chat,'Brend topilmadi');return
+        items=list(b.templates or []);keys={t['key'] for t in items};base=key;n=2
+        while key in keys:key=f'{base[:10]}{n}';n+=1
+        items.append({'key':key,'name':name,'prompt':prompt});b.templates=items
+        db.add(Audit(actor=actor,action='template_added',brand_slug=slug,details=name))
+    rclient().delete(f'pending:{actor}')
+    show_templates(chat,slug)
 
 
 def handle_approval(actor,chat,action,video_id):
     """Super Admin buttons under the preview. Status checks make double presses harmless."""
+    if action=='when':
+        with Session() as db:
+            v=db.get(Video,video_id)
+            if not v or v.status!='awaiting_approval':
+                send(chat,'ℹ️ Bu video allaqachon ko‘rib chiqilgan yoki topilmadi.');return
+            b=db.get(Brand,v.brand_slug)
+            try:slots=parse_slots(b.publish_slots or '')
+            except ValueError:slots=[]
+            taken=[x.scheduled_at for x in db.scalars(select(Video).where(Video.brand_slug==v.brand_slug,Video.status=='scheduled'))]
+        options=quick_choices(slots,taken)
+        rows=[[(tlabel(dt),f'appr:at:{video_id}:{int(dt.timestamp())}')] for dt in options]
+        rows.append([('✅ Hozir joylash',f'appr:ok:{video_id}')])
+        send(chat,'⏰ Qachon joylaymiz? (Toshkent vaqti)',inline(rows));return
+    if action=='at':
+        video_id,_,ts=video_id.partition(':')
+        when=datetime.fromtimestamp(int(ts),tz=timezone.utc)
+        if when<=now_utc():send(chat,'⚠️ Bu vaqt o‘tib ketdi, boshqasini tanlang.');return
+        with Session.begin() as db:
+            v=db.get(Video,video_id)
+            if not v or v.status!='awaiting_approval':
+                send(chat,'ℹ️ Bu video allaqachon ko‘rib chiqilgan yoki topilmadi.');return
+            flagged=(v.error or '').startswith('AI_FLAG:')
+            v.status='scheduled';v.scheduled_at=when;v.approved_by=actor;sender=v.sender_id
+            db.add(Audit(actor=actor,action='scheduled_over_ai_flag' if flagged else 'scheduled',brand_slug=v.brand_slug,
+                         details=f'{video_id} @ {when.isoformat()}'))
+        send(chat,f'⏰ {tlabel(when)} da joylanadi.',inline([[('↩️ Rejani bekor qilish',f'appr:unsched:{video_id}')]]))
+        if sender!=actor: send(sender,f'✅ Videongiz tasdiqlandi, {tlabel(when)} da joylanadi.')
+        return
+    if action=='unsched':
+        from .approval import preview_text, approval_markup
+        with Session.begin() as db:
+            v=db.get(Video,video_id)
+            if not v or v.status!='scheduled':
+                send(chat,'ℹ️ Bu video endi rejada emas (joylangan yoki bekor qilingan).');return
+            v.status='awaiting_approval';v.scheduled_at=None
+            db.add(Audit(actor=actor,action='unscheduled',brand_slug=v.brand_slug,details=video_id))
+        send(chat,'↩️ Reja bekor qilindi.\n\n'+preview_text(video_id),approval_markup(video_id));return
     if action=='ok':
         with Session.begin() as db:
             v=db.get(Video,video_id)

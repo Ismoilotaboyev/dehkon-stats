@@ -21,6 +21,8 @@ async def lifespan(app:FastAPI):
     import threading
     from .setup_webhook import ensure_bot_setup
     threading.Thread(target=ensure_bot_setup, daemon=True, name='bot-setup').start()
+    from .scheduler import start as start_scheduler
+    start_scheduler()  # scheduled posts, 24/72 h stats, weekly report, connection check
     yield
 
 
@@ -77,7 +79,7 @@ async def telegram_webhook(request:Request):
         elif data.get('message'):
             msg=data['message']
             if msg.get('text'):handle_text(msg)
-            if msg.get('video') or msg.get('document'):handle_video(msg)
+            if msg.get('video') or msg.get('document') or msg.get('photo'):handle_video(msg)
     except Exception:
         log.exception('Telegram event failed; do not silently report success')
         raise HTTPException(500,'Message processing failed, Telegram may retry')

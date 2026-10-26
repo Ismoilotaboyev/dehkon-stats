@@ -26,7 +26,7 @@ def start_auth(platform, slug, admin_id):
         if not env('IG_APP_ID') or not env('IG_APP_SECRET'): raise ValueError('Meta Instagram App sozlanmagan')
         return 'https://www.instagram.com/oauth/authorize?' + urlencode({
             'client_id':env('IG_APP_ID'), 'redirect_uri':base_url()+'/oauth/instagram/callback',
-            'scope':'instagram_business_basic,instagram_business_content_publish',
+            'scope':'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights',
             'response_type':'code','state':state})
     if platform=='youtube':
         if not env('GOOGLE_CLIENT_ID') or not env('GOOGLE_CLIENT_SECRET'): raise ValueError('Google OAuth sozlanmagan')

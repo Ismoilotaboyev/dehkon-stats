@@ -169,7 +169,7 @@ def e2e(monkeypatch, tmp_path):
         shutil.copy(store / key.replace('/', '__'), local); return local
 
     monkeypatch.setattr(worker, 'get_file', lambda fid, dest: shutil.copy(src, dest))
-    monkeypatch.setattr(worker, 'make_ai_description', lambda *a: {'hook': 'Yangi kolleksiya', 'caption': 'AI caption',
+    monkeypatch.setattr(worker, 'make_ai_description', lambda *a, **k: {'hook': 'Yangi kolleksiya', 'caption': 'AI caption',
                                                                    'youtube_title': 'T #Shorts', 'youtube_description': 'D'})
     monkeypatch.setattr(worker, 'upload_blob', upload)
     monkeypatch.setattr(worker, 'download_blob', download)
@@ -237,7 +237,7 @@ def test_prepare_approve_publish(e2e, monkeypatch):
         return 'IG-' + surface
     monkeypatch.setattr(worker, 'ig_publish', fake_ig)
     monkeypatch.setattr(worker, 'youtube_publish', lambda a, path, t, d: calls['yt'].append(Path(path).exists()) or 'YT1')
-    monkeypatch.setattr(worker, 'telegram_business_story', lambda a, path, cap, dur: calls['tg'].append((cap, dur)) or f'TG{len(calls["tg"])}')
+    monkeypatch.setattr(worker, 'telegram_business_story', lambda a, path, cap, dur, **k: calls['tg'].append((cap, dur)) or f'TG{len(calls["tg"])}')
     results = worker.publish_video('ve')
 
     assert [k for _, k in calls['ig']] == ['media/e2e-brand/ve/vertical.mp4', 'media/e2e-brand/ve/story_1.mp4']
@@ -481,7 +481,7 @@ def fastworker(monkeypatch):
 
 
 def _ai(flag):
-    return lambda *a: {'hook': 'h', 'caption': 'Sarlavha! Gap.', 'youtube_title': 't', 'youtube_description': 'd',
+    return lambda *a, **k: {'hook': 'h', 'caption': 'Sarlavha! Gap.', 'youtube_title': 't', 'youtube_description': 'd',
                        'flag': flag}
 
 

@@ -23,6 +23,10 @@ class Brand(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # True: videos AI did not flag are published without waiting for a Super Admin.
     auto_publish: Mapped[bool] = mapped_column(Boolean, default=False)
+    # "09:00,13:00,19:00" (Tashkent time): approved/auto videos wait for the next free slot. Empty = publish at once.
+    publish_slots: Mapped[str] = mapped_column(String(200), default='')
+    # Post types staff pick when sending: [{"key": "aksiya", "name": "Aksiya", "prompt": "..."}]
+    templates: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Membership(Base):
@@ -72,8 +76,13 @@ class Video(Base):
     story_parts: Mapped[int] = mapped_column(Integer, default=0)
     tg_story_parts: Mapped[int] = mapped_column(Integer, default=0)
     approved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # received -> queued -> processing -> awaiting_approval -> approved -> publishing -> published/partial
-    # or: rejected / failed / blocked / no_accounts / no_targets
+    media_kind: Mapped[str] = mapped_column(String(10), default='video')   # video | photo
+    post_type: Mapped[str] = mapped_column(String(40), default='')         # Brand.templates key
+    sender_name: Mapped[str] = mapped_column(String(200), default='')
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # received -> [awaiting_type] -> queued -> processing -> awaiting_approval -> [scheduled] -> approved
+    #   -> publishing -> published/partial;  or: rejected / failed / blocked / no_accounts / no_targets
     status: Mapped[str] = mapped_column(String(30), default='received')
     error: Mapped[str] = mapped_column(Text, default='')
     __table_args__ = (UniqueConstraint('sender_id', 'message_id'),)
@@ -91,7 +100,25 @@ class Publication(Base):
     status: Mapped[str] = mapped_column(String(30), default='queued')
     external_post_id: Mapped[str] = mapped_column(String(200), default='')
     details: Mapped[str] = mapped_column(Text, default='')
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checks_done: Mapped[int] = mapped_column(Integer, default=0)   # 0 -> 24 h insight check -> 1 -> 72 h -> 2
     __table_args__ = (UniqueConstraint('video_id','account_id','surface','part'),)
+
+
+class PostMetric(Base):
+    """Insights snapshot of a published Reel / Trial Reel / Short, taken ~24 h and ~72 h after publishing."""
+    __tablename__ = 'post_metrics'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    publication_id: Mapped[str] = mapped_column(String(36), ForeignKey('publications.id'))
+    hours: Mapped[int] = mapped_column(Integer)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    reach: Mapped[int] = mapped_column(Integer, default=0)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    saves: Mapped[int] = mapped_column(Integer, default=0)
+    shares: Mapped[int] = mapped_column(Integer, default=0)
+    permalink: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Audit(Base):
