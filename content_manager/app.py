@@ -36,6 +36,35 @@ def home():
     return HTMLResponse('<html><meta charset="utf-8"><title>Content Manager AI</title><body style="font:16px system-ui;max-width:700px;margin:70px auto"><h1>Content Manager AI</h1><p>Dehqon Dorixona — Telegram orqali boshqariladigan ko‘p brendli avtomatik kontent tizimi.</p><p>Brend qo‘shish va akkauntlarni ulash uchun Telegram botning shaxsiy chatida <b>/menu</b> ni yuboring.</p></body></html>')
 
 
+PAGE_STYLE='font:16px/1.6 system-ui,sans-serif;max-width:760px;margin:48px auto;padding:0 16px;color:#1f2328'
+
+
+@app.get('/privacy')
+def privacy():
+    return HTMLResponse(f"""<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — Content Manager AI</title></head><body style="{PAGE_STYLE}">
+<h1>Privacy Policy</h1><p>Content Manager AI is an internal tool of Dehqon Dorixona. It lets authorised staff send a video to a
+Telegram bot; after a Super Admin approves it, the video is published to the brand's own Instagram, YouTube and Telegram Business accounts.</p>
+<h2>Data we use</h2><ul>
+<li>Telegram user IDs of staff and admins, to check permissions.</li>
+<li>Videos sent to the bot and the captions generated for them, stored only to prepare and publish the post.</li>
+<li>OAuth tokens for the connected Instagram and YouTube accounts (scopes: upload videos, read own channel). Tokens are stored encrypted.</li>
+</ul>
+<h2>How we use it</h2><p>Only to publish content to the accounts the brand owner connected. We do not sell or share data with third parties,
+and we do not use Google user data for advertising. Video text is processed by OpenAI to write captions.</p>
+<h2>Removal</h2><p>An account owner can disconnect access at any time in their Google, Instagram or Telegram settings.
+To delete stored data, contact the administrator at 1902ismoil@gmail.com.</p></body></html>""")
+
+
+@app.get('/terms')
+def terms():
+    return HTMLResponse(f"""<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms of Service — Content Manager AI</title></head><body style="{PAGE_STYLE}">
+<h1>Terms of Service</h1><p>Content Manager AI is provided for internal use by Dehqon Dorixona and its authorised staff.
+Only content approved by a Super Admin is published, and only to accounts the brand owner connected.
+Access can be revoked at any time. Contact: 1902ismoil@gmail.com.</p></body></html>""")
+
+
 @app.post('/telegram/webhook')
 async def telegram_webhook(request:Request):
     secret=request.headers.get('x-telegram-bot-api-secret-token')
