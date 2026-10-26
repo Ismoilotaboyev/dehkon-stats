@@ -407,3 +407,35 @@ def test_bindbiz_without_story_rights_stays_off(botmocks, monkeypatch):
     assert 'Story ruxsati yo‘q' in sent[-1][1]
     with Session() as db:
         assert db.get(Account, aid).status == 'disabled'
+
+
+# ---------- caption layout ----------
+
+def test_caption_layout_from_one_paragraph():
+    one = ("Dehkon Dorixona hamshiralik xizmati endi uyingizda! Malakali, tajribali hamshiralarimiz gigiyenik va sifatli "
+           "xizmat ko‘rsatadi. Tezkor va ishonchli yordam uchun hoziroq qo‘ng‘iroq qiling yoki Direct orqali yozing. "
+           "Sog‘lig‘ingiz bizning ustuvorligimiz! 📞 55 588 60 60")
+    assert worker.format_caption(one) == (
+        "Dehkon Dorixona hamshiralik xizmati endi uyingizda!\n\n"
+        "Malakali, tajribali hamshiralarimiz gigiyenik va sifatli xizmat ko‘rsatadi.\n"
+        "Tezkor va ishonchli yordam uchun hoziroq qo‘ng‘iroq qiling yoki Direct orqali yozing.\n"
+        "Sog‘lig‘ingiz bizning ustuvorligimiz!\n\n"
+        "📞 55 588 60 60")
+
+
+def test_caption_layout_keeps_ai_lines_and_no_phone():
+    assert worker.format_caption("A!\n\n\n\nB.\nC.") == "A!\n\nB.\nC."
+    assert worker.format_caption("Sarlavha! Birinchi gap. Ikkinchi gap.") == "Sarlavha!\n\nBirinchi gap.\nIkkinchi gap."
+    assert '55 588' not in worker.CAPTION_FORMAT
+
+
+def test_phone_migration(tmp_path):
+    db = tmp_path / 'p.db'
+    envv = dict(os.environ, DATABASE_URL=f'sqlite+pysqlite:///{db}')
+    run = lambda *a: subprocess.run([sys.executable, '-m', 'alembic', *a], cwd=ROOT, env=envv, check=True, capture_output=True)
+    run('upgrade', '0001')
+    import sqlite3
+    c = sqlite3.connect(db); c.execute("INSERT INTO brands VALUES ('dehkon-dorixona','Dehqon Dorixona','Eski uslub.','[]',1)"); c.commit()
+    run('upgrade', 'head'); run('upgrade', 'head')
+    prompt = c.execute("SELECT ai_prompt FROM brands").fetchone()[0]
+    assert prompt.startswith('Eski uslub.') and prompt.count('55 588 60 60') == 1

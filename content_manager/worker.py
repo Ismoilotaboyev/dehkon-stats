@@ -5,6 +5,7 @@ prepare_video: download, normalise, AI text, Story parts, upload to S3, build th
 publish_video: runs only after a Super Admin pressed ✅ Joylash.
 """
 import os
+import re
 import json
 import math
 import base64
@@ -93,6 +94,41 @@ def get_file(telegram_file_id,dest):
                 if chunk:f.write(chunk)
 
 
+CAPTION_FORMAT=("Caption TUZILISHI (qat'iy): 1-qator — qisqa sarlavha gap; keyin bitta bo'sh qator; "
+    "keyin har bir gap ALOHIDA qatorda (gaplar orasida bo'sh qator yo'q); keyin bitta bo'sh qator; "
+    "oxirgi qatorda brend qoidalaridagi telefon raqami 📞 bilan (raqam berilmagan bo'lsa bu qatorni yozma). "
+    "JSON ichida qator ko'chirish uchun \\n ishlat. Faqat TUZILISH namunasi (mazmunini va raqamini ko'chirma):\n"
+    "Dehkon Dorixona hamshiralik xizmati endi uyingizda!\n\n"
+    "Malakali, tajribali hamshiralarimiz gigiyenik va sifatli xizmat ko‘rsatadi.\n"
+    "Tezkor va ishonchli yordam uchun hoziroq qo‘ng‘iroq qiling yoki Direct orqali yozing.\n"
+    "Sog‘lig‘ingiz bizning ustuvorligimiz!\n\n📞 <brend telefoni>")
+
+_SENTENCE=re.compile(r'(?<=[.!?…])\s+(?=\S)')
+_PHONE=re.compile(r'(📞|☎️|☎)\s*[+\d][\d\s()-]{5,}\d|\+?\d[\d\s()-]{7,}\d')
+
+
+def format_caption(text):
+    """Enforce: headline / blank / one sentence per line / blank / 📞 phone.
+    Captions the AI already split into lines are kept (only extra blank lines are collapsed)."""
+    text=(text or '').replace('\r\n','\n').strip()
+    if not text:return text
+    if '\n' in text:
+        return re.sub(r'\n{3,}','\n\n','\n'.join(l.rstrip() for l in text.split('\n'))).strip()
+    phone=''
+    m=None
+    for m in _PHONE.finditer(text):pass
+    if m and m.end()>=len(text.rstrip(' .'))-1:
+        phone=m.group(0).strip()
+        text=text[:m.start()].rstrip()
+        if not phone.startswith(('📞','☎')):phone='📞 '+phone
+    sentences=[x.strip() for x in _SENTENCE.split(text) if x.strip()]
+    if not sentences:return phone
+    parts=[sentences[0]]
+    if len(sentences)>1:parts.append('\n'.join(sentences[1:]))
+    if phone:parts.append(phone)
+    return '\n\n'.join(parts)
+
+
 def make_ai_description(input_video,brand,video_note):
     from openai import OpenAI
     if not env('OPENAI_API_KEY'):raise ValueError('OPENAI_API_KEY sozlanmagan; noto‘g‘ri matnni avtomatik chop etmaslik uchun nashr to‘xtatildi')
@@ -116,7 +152,7 @@ def make_ai_description(input_video,brand,video_note):
             b64=base64.b64encode(shot.read_bytes()).decode()
             visual.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+b64,'detail':'low'})
         except Exception:pass
-    prompt='''Quyidagi brend uchun video reklama mazmunini tahlil qil. FAQAT JSON qaytar: {"hook":"...", "caption":"...", "youtube_title":"...", "youtube_description":"...", "block_publish": false, "reason":""}. Uzbek lotinida yoz. Hook maksimum 9 so‘z. Caption 500 belgigacha, CTA ham qo‘sh. Youtube title #Shorts bilan 100 belgidan qisqa. Mahsulot narxini, chegirma, kasallikni davolash ta'sirini, xavfsizlik va tibbiy da'volarni videoda aniq asos bo‘lmasa to‘qima. Agar reklama tibbiy zarar, yolg‘on da'vo yoki videoda nima borligini tushunib bo‘lmasa block_publish true belgilagin. Brend haqida ma'lumotni boshqa brendlardan olma. Brend qoidalari: '''+brand.ai_prompt
+    prompt='''Quyidagi brend uchun video reklama mazmunini tahlil qil. FAQAT JSON qaytar: {"hook":"...", "caption":"...", "youtube_title":"...", "youtube_description":"...", "block_publish": false, "reason":""}. Uzbek lotinida yoz. Hook maksimum 9 so‘z. Caption 500 belgigacha, CTA ham qo‘sh. '''+CAPTION_FORMAT+''' Youtube title #Shorts bilan 100 belgidan qisqa. Mahsulot narxini, chegirma, kasallikni davolash ta'sirini, xavfsizlik va tibbiy da'volarni videoda aniq asos bo‘lmasa to‘qima. Agar reklama tibbiy zarar, yolg‘on da'vo yoki videoda nima borligini tushunib bo‘lmasa block_publish true belgilagin. Brend haqida ma'lumotni boshqa brendlardan olma. Brend qoidalari: '''+brand.ai_prompt
     content=[{'type':'input_text','text':prompt+'\nVideo izohi: '+(video_note or '')+'\nTranscript: '+transcript[:12000]}]+visual
     output=api.responses.create(model=env('OPENAI_VISION_MODEL','gpt-4.1-mini'),input=[{'role':'user','content':content}])
     raw=output.output_text.strip()
@@ -125,6 +161,7 @@ def make_ai_description(input_video,brand,video_note):
     d=json.loads(raw)
     for k in ('hook','caption','youtube_title','youtube_description'):
         if k not in d:raise ValueError('AI JSON response missing field '+k)
+    d['caption']=format_caption(d['caption'])
     if d.get('block_publish'):raise ValueError('AI kontentni tekshiruvga yubordi: '+str(d.get('reason',''))[:200])
     return d
 

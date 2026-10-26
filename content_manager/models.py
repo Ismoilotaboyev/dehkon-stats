@@ -122,4 +122,4 @@ def init_db():
     """Seed the initial brand. Schema itself is managed by Alembic (see migrate())."""
     with Session.begin() as db:
         if not db.get(Brand,'dehkon-dorixona'):
-            db.add(Brand(slug='dehkon-dorixona', name='Dehqon Dorixona', ai_prompt='Dehqon Dorixona brendi. O‘zbek lotin tilida, qisqa va ishonchli uslubda. Videoda yoki bazada tasdiqlanmagan dori taʼsiri, narx, chegirma yoki davolash vaʼdasini hech qachon yozma. CTA qisqa bo‘lsin.'))
+            db.add(Brand(slug='dehkon-dorixona', name='Dehqon Dorixona', ai_prompt='Dehqon Dorixona brendi. O‘zbek lotin tilida, qisqa va ishonchli uslubda. Videoda yoki bazada tasdiqlanmagan dori taʼsiri, narx, chegirma yoki davolash vaʼdasini hech qachon yozma. CTA qisqa bo‘lsin. Telefon raqami (captionning oxirgi qatori): 📞 55 588 60 60'))
